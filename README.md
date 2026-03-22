@@ -7,10 +7,15 @@ A Zig library for gql
 
 ## Features
 
+- **GQL Lexer**: Tokenizes GQL (ISO/IEC 39075:2024) source text
+- **GQL Parser**: Produces a typed AST from the token stream
+- **AST Types**: Full node definitions for statements, expressions, patterns, and graph DDL
+- **Pretty Printers**: Human-readable and JSON output for AST programs
+- **Status Codes**: ISO/IEC 39075 diagnostic status codes and helpers
+- **Language Metadata**: Keyword tables, built-in functions, types, and procedures
 - **Zero Dependencies**: Pure Zig standard library only
-- **Memory Safe**: Proper allocation patterns with no leaks
+- **Memory Safe**: Arena-based allocation with no leaks
 - **Cross-Platform**: Linux, macOS, Windows support
-- **Well Tested**: Comprehensive unit and integration tests
 
 ## Installation
 
@@ -44,9 +49,12 @@ const std = @import("std");
 const gql = @import("gql");
 
 pub fn main() !void {
-    try gql.init(.{
-        .debug = true,
-    });
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    var lx = gql.Lexer{ .src = "MATCH (n:Person) RETURN n.name" };
+    var parser = gql.Parser{ .lx = &lx, .arena = &arena, .cur = lx.next() };
+    const program = try parser.parseProgram();
+    _ = program; // Use the parsed AST
 }
 ```
 

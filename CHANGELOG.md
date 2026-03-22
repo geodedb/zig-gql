@@ -15,13 +15,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI/CD pipeline
 - Documentation
 
-## [0.1.0] - YYYY-MM-DD
+## [0.1.0] - 2026-03-22
 
 ### Added
 
-- Initial release
-- Basic functionality
-- Documentation and examples
+- GQL front-end extracted from the Geode graph database
+- Lexer, parser, and full AST types for GQL (ISO/IEC 39075:2024)
+- Human-readable and JSON pretty printers
+- ISO/IEC 39075 status codes and diagnostic helpers
+- Language metadata (keywords, built-in functions, types, procedures)
+- Temporal parsing and formatting helpers
+- Unicode identifier support
+- Field-Level Encryption AST extensions (Geode extension)
 
 [Unreleased]: https://gitlab.com/devnw/zig/gql/-/compare/v0.1.0...HEAD
 [0.1.0]: https://gitlab.com/devnw/zig/gql/-/releases/v0.1.0

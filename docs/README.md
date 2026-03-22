@@ -2,15 +2,12 @@
 
 ## Overview
 
-A Zig library for gql
+A standalone GQL (ISO/IEC 39075:2024) front-end library for Zig, providing
+lexing, parsing, AST types, pretty-printing, status/diagnostics, and language
+metadata for GQL queries.
 
-## Table of Contents
-
-- [Getting Started](getting-started.md)
-- [API Reference](api-reference.md)
-- [Examples](examples.md)
-- [Architecture](architecture.md)
-- [FAQ](faq.md)
+Detailed API documentation lives in the source code doc comments (see `src/`).
+For usage instructions and installation, see the [root README](../README.md).
 
 ## Quick Links
 

@@ -5,20 +5,12 @@
 
 const std = @import("std");
 
-// Note: When running from the examples directory, you would import like this:
-// const lib = @import("gql");
-
 pub fn main() !void {
     const stdout = std.io.getStdOut().writer();
-
-    try stdout.print("gql Example\n", .{});
-    try stdout.print("========================\n\n", .{});
-
-    // Example usage:
-    // const config = lib.Config{
-    //     .debug = true,
-    // };
-    // try lib.init(config);
-
-    try stdout.print("Example completed successfully!\n", .{});
+    try stdout.print("gql parser example\n", .{});
+    // Note: When using as a library dependency, import with:
+    // const gql = @import("gql");
+    // var lx = gql.Lexer{ .src = "MATCH (n) RETURN n" };
+    // var parser = gql.Parser{ .lx = &lx, .arena = &arena, .cur = lx.next() };
+    // const program = try parser.parseProgram();
 }
