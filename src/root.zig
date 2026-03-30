@@ -78,6 +78,9 @@ pub const temporal = @import("temporal.zig");
 /// Unicode identifier and encoding helpers used by the lexer/token layer.
 pub const unicode = @import("unicode/unicode_tables.zig");
 
+/// Parallel processing helpers (optional spice integration).
+pub const parallel = @import("parallel.zig");
+
 // ============================================================================
 // Convenience re-exports
 // ============================================================================
