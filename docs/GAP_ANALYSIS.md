@@ -78,7 +78,7 @@ Keep in Geode:
 | Gap-ID | Severity | Gap | Status |
 |---|---|---|---|
 | GAP-PERF-001 | P0 | No expression recursion depth guard | **Closed** — same fix as GAP-SEC-001; `expr_depth` counter + `MAX_EXPR_DEPTH = 256` |
-| GAP-PERF-002 | P0 | No benchmark suite | **Won't Do** — creating a benchmark suite requires representative query corpus and baseline measurements. Tracked as a future initiative. The library currently validates correctness via 135 tests. |
+| GAP-PERF-002 | P0 | No benchmark suite | **Closed** — full benchmark suite added: `benchmarks/bench.zig` (14 benchmarks: lex, parse, print, temporal, keyword, unicode), `benchmarks/scale_bench.zig` (6-tier incremental scale with JSON output), `benchmarks/compare.zig` (regression detection with configurable threshold), `benchmarks/results/` (baseline tracking). Build steps: `bench`, `scale-bench`, `compare-bench`. Makefile targets: `bench`, `scale-bench`, `bench-save`, `bench-baseline`, `bench-compare`. |
 | GAP-PERF-003 | P1 | caseFoldToUpper heap-allocates per identifier | **Closed** — added ASCII fast-path using `allocator.alloc` + `std.ascii.toUpper` for pure-ASCII identifiers (no ArrayList overhead) |
 | GAP-PERF-004 | P1 | peekKind/peek2Kind copy Lexer and re-lex | **Won't Do** — adding a lookahead buffer is an architectural change that modifies the Parser's advance/consume model at 14+ sites. Should be done alongside GAP-QUAL-001 (parser split). |
 | GAP-PERF-005 | P2 | peekToken restores incomplete state | **Won't Do** — subsumed by GAP-PERF-004 (lookahead buffer). |
@@ -213,8 +213,8 @@ pub fn parallelProcessRules(rules: []Rule, ...) usize {
 
 | Status | Count | Percentage |
 |---|---|---|
-| **Closed** | 36 | 63% |
-| **Won't Do** (documented) | 21 | 37% |
+| **Closed** | 37 | 65% |
+| **Won't Do** (documented) | 20 | 35% |
 | **Open** | 0 | 0% |
 
 | Domain | Closed | Won't Do | Open | Total |
@@ -222,10 +222,10 @@ pub fn parallelProcessRules(rules: []Rule, ...) usize {
 | Extraction | 3 | 0 | 0 | 3 |
 | Security | 7 | 5 | 0 | 12 |
 | Quality | 5 | 7 | 0 | 12 |
-| Performance | 5 | 5 | 0 | 10 |
+| Performance | 6 | 4 | 0 | 10 |
 | Documentation | 9 | 1 | 0 | 10 |
 | Parallelism | 8 | 2 | 0 | 10 |
-| **Total** | **37** | **20** | **0** | **57** |
+| **Total** | **38** | **19** | **0** | **57** |
 
 All HIGH and CRITICAL severity items are either **Closed** or have documented rationale for Won't Do.
 All Won't Do items have explicit justification and are tracked for future initiatives.
@@ -245,12 +245,13 @@ All Won't Do items have explicit justification and are tracked for future initia
 - README, examples, CHANGELOG, SECURITY, CODEOWNERS, docs links fixed
 - FLE scope, arena budget, print limitations documented
 - encryption_key sensitivity warning added
+- Full benchmark suite (14 benchmarks, 6-tier scale bench, regression detection, baseline tracking)
 
 ### What remains for future initiatives:
 - Parser modularization (split 6,628-line file)
 - Lookahead buffer (architectural optimization)
 - RETURN clause deduplication (11 sites)
-- Benchmark suite
+
 - Confusable identifier detection (Unicode data)
 - Complete Unicode case folding (Unicode data)
 - Proper double-quote/quoted identifier handling

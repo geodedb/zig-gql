@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "timestamp": "2026-03-30T16:35:59Z",
+  "git_commit": "unknown",
+  "system": { "os": "linux", "arch": "x86_64" },
+  "tiers": [
+    {
+      "name": "100",
+      "query_count": 170,
+      "lex_ops_sec": 448313,
+      "parse_simple_ns": 27831,
+      "parse_rel_ns": 10837,
+      "parse_complex_ns": 17629,
+      "print_human_ns": 1611,
+      "print_json_ns": 46,
+      "temporal_ns": 5,
+      "keyword_ns": 19
+    },
+    {
+      "name": "500",
+      "query_count": 850,
+      "lex_ops_sec": 473415,
+      "parse_simple_ns": 6486,
+      "parse_rel_ns": 10524,
+      "parse_complex_ns": 18623,
+      "print_human_ns": 2349,
+      "print_json_ns": 61,
+      "temporal_ns": 6,
+      "keyword_ns": 24
+    },
+    {
+      "name": "1K",
+      "query_count": 1700,
+      "lex_ops_sec": 460289,
+      "parse_simple_ns": 7092,
+      "parse_rel_ns": 10647,
+      "parse_complex_ns": 17922,
+      "print_human_ns": 1493,
+      "print_json_ns": 40,
+      "temporal_ns": 6,
+      "keyword_ns": 18
+    }
+  ]
+}

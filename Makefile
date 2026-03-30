@@ -5,6 +5,7 @@
 .PHONY: all build test test-unit test-integration clean check fmt help dev ci
 .PHONY: test-release-safe test-release-fast test-release-small test-all-optimizations
 .PHONY: pre-commit-install pre-commit pre-commit-run
+.PHONY: bench scale-bench bench-save bench-compare bench-baseline
 
 # Default target: build and run tests
 all: build test-unit
@@ -29,6 +30,34 @@ test-integration:
 	@echo "🔗 Running integration tests..."
 	@zig build test-integration --summary all
 
+# Run performance benchmarks
+bench:
+	@echo "Running benchmarks..."
+	@zig build bench
+
+# Incremental scale benchmark
+scale-bench:
+	@echo "Running incremental scale benchmark..."
+	@zig build scale-bench 2>/dev/null
+
+# Run scale bench and save results
+bench-save:
+	@echo "Running scale benchmark and saving results..."
+	@zig build scale-bench 2>/dev/null > benchmarks/results/$$(git rev-parse --short HEAD).json
+	@echo "Saved to benchmarks/results/$$(git rev-parse --short HEAD).json"
+
+# Compare current results against baseline
+bench-compare:
+	@echo "Running scale benchmark and comparing against baseline..."
+	@zig build scale-bench 2>/dev/null > /tmp/current-gql-bench.json
+	@zig build compare-bench -- benchmarks/results/baseline.json /tmp/current-gql-bench.json
+
+# Save current results as the baseline
+bench-baseline:
+	@echo "Running scale benchmark and saving as baseline..."
+	@zig build scale-bench 2>/dev/null > benchmarks/results/baseline.json
+	@echo "Saved to benchmarks/results/baseline.json"
+
 # Clean build artifacts
 clean:
 	@echo "🧹 Cleaning build artifacts..."
@@ -42,7 +71,7 @@ check:
 # Format source code
 fmt:
 	@echo "📝 Formatting code..."
-	@zig fmt src/ tests/ build.zig
+	@zig fmt src/ tests/ benchmarks/ build.zig
 
 # Quick development iteration loop
 dev: fmt check test-unit
@@ -101,6 +130,13 @@ help:
 	@echo "  test-release-fast    Test with ReleaseFast"
 	@echo "  test-release-small   Test with ReleaseSmall"
 	@echo "  test-all-optimizations  Test all optimization levels"
+	@echo ""
+	@echo "Benchmarks:"
+	@echo "  bench                Run performance benchmarks"
+	@echo "  scale-bench          Run incremental scale benchmark"
+	@echo "  bench-save           Run scale bench and save results"
+	@echo "  bench-baseline       Save current results as baseline"
+	@echo "  bench-compare        Compare current against baseline"
 	@echo ""
 	@echo "Code Quality:"
 	@echo "  fmt                  Format source code"
