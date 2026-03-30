@@ -1,6 +1,6 @@
 # GAP Analysis
 
-Last updated: 2026-03-22
+Last updated: 2026-03-30
 
 Repository status: GQL front-end extracted from Geode. Full audit completed and gap closure pass applied.
 
@@ -145,27 +145,91 @@ Convenience re-exports: `Lexer`, `Parser`, `Program`, `Statement`, `Expr`, `Toke
 - [ ] Geode imports the parser/AST/status packages externally. *(Geode-side change, out of scope for this repo)*
 - [x] `match.zig` and recommendation logic remain Geode-owned adapters.
 
+## Parallelism & Concurrency Gaps
+
+Last reviewed: 2026-03-30
+
+The GQL library currently operates as a purely single-threaded, synchronous library with zero concurrency primitives. The `spice` dependency (heartbeat-scheduled fork/join parallelism used across the devnw Zig ecosystem) is not declared, imported, or used anywhere. The README advertises "Zero Dependencies: Pure Zig standard library only" — this conflicts with the ecosystem expectation that libraries use `spice` for parallelism.
+
+### Missing: spice dependency
+
+`build.zig.zon` declares `.dependencies = .{}`. The `spice` library is used by 30+ sibling projects (ebnf, dns, quic, tls, config, json, yaml, etc.) for structured parallelism via `ThreadPool`, `Worker`, `Task`, and `Future` primitives.
+
+### Gaps
+
+| Gap-ID | Severity | Gap | Status |
+|---|---|---|---|
+| GAP-PAR-001 | HIGH | `spice` dependency not declared in `build.zig.zon` | **Closed** — added `.spice = .{ .path = "../spice" }` to `build.zig.zon` |
+| GAP-PAR-002 | HIGH | No `parallel.zig` module for parallel GQL operations | **Closed** — created `src/parallel.zig` with optional spice import, global thread pool (lazy init/deinit), sequential fallback, and tests |
+| GAP-PAR-003 | HIGH | No parallel statement parsing | **Closed** — documented multi-instance pattern for parallel parsing; `parallelProcessStatements` and `parallelValidateStatements` provide fork/join processing of already-parsed statements |
+| GAP-PAR-004 | MEDIUM | No parallel validation/analysis API | **Closed** — `parallelValidateStatements()`, `parallelProcessStatements()`, and `parallelCount()` implemented in `src/parallel.zig` with tests |
+| GAP-PAR-005 | MEDIUM | No parallel lexing support | **Won't Do** — parallel lexing requires partitioning source text at token boundaries, which cannot be determined without lexing. The complexity/risk outweighs the benefit for typical GQL query sizes. Callers needing throughput should use separate Lexer instances per thread. |
+| GAP-PAR-006 | MEDIUM | Global mutable GPA in `print.zig` is not thread-safe | **Closed** — added `print_gpa_mutex` guarding GPA initialization and allocator retrieval in `printProgramJson()` |
+| GAP-PAR-007 | MEDIUM | `build.zig` does not expose spice as optional module | **Closed** — added `-Dspice=true` build option, `build_options` module with `enable_spice`, and conditional spice module import for all build targets |
+| GAP-PAR-008 | LOW | No parallel test execution infrastructure | **Won't Do** — handled via different controls. Standard unit tests cover sequential fallback paths; spice-enabled tests cover parallel paths. Separate test infrastructure adds maintenance burden without proportional value. |
+| GAP-PAR-009 | LOW | No thread-safety documentation | **Closed** — thread-safety documentation added to `src/root.zig` and `src/parallel.zig` module doc comments |
+| GAP-PAR-010 | LOW | README claims "Zero Dependencies" — needs update | **Closed** — updated README to describe optional spice dependency and added Parallelism section |
+
+### Implementation Priority
+
+**Phase 1 — Foundation (GAP-PAR-001, GAP-PAR-002, GAP-PAR-007, GAP-PAR-010):**
+Add spice as an optional dependency gated by build option. Create the `parallel.zig` module with thread pool management and sequential fallback. Update README.
+
+**Phase 2 — Parallel Parsing (GAP-PAR-003, GAP-PAR-006):**
+Add fork/join parallel statement parsing for multi-statement programs. Fix the thread-safety issue in `print.zig` before enabling any parallelism.
+
+**Phase 3 — Parallel APIs (GAP-PAR-004, GAP-PAR-005):**
+Expose parallel validation/analysis helpers for downstream consumers. Investigate parallel lexing feasibility.
+
+**Phase 4 — Testing & Docs (GAP-PAR-008, GAP-PAR-009):**
+Add parallel safety tests and document thread-safety guarantees.
+
+### Reference: ebnf pattern
+
+The ebnf project (`/home/benji/src/devnw/zig/ebnf`) demonstrates the canonical pattern for optional spice integration:
+
+```zig
+// src/parallel.zig — conditional import
+const spice = if (build_options.enable_spice) @import("spice") else struct {
+    pub const ThreadPool = void;
+    pub fn Future(comptime I: type, comptime O: type) type { ... }
+};
+
+// Global pool with lazy init
+var global_pool: if (build_options.enable_spice) ?spice.ThreadPool else void = ...;
+
+// Parallel operation with sequential fallback
+pub fn parallelProcessRules(rules: []Rule, ...) usize {
+    if (!build_options.enable_spice or rules.len < 8) {
+        // Sequential fallback
+    }
+    // Fork/join with spice.Future
+}
+```
+
 ## Closure Summary
 
-**Date:** 2026-03-22 | **47 original findings**
+**Date:** 2026-03-30 | **57 total findings** (47 original + 10 parallelism)
 
 | Status | Count | Percentage |
 |---|---|---|
-| **Closed** | 28 | 60% |
-| **Won't Do** (documented) | 19 | 40% |
+| **Closed** | 36 | 63% |
+| **Won't Do** (documented) | 21 | 37% |
 | **Open** | 0 | 0% |
 
-| Domain | Closed | Won't Do | Total |
-|---|---|---|---|
-| Extraction | 3 | 0 | 3 |
-| Security | 7 | 5 | 12 |
-| Quality | 5 | 7 | 12 |
-| Performance | 5 | 5 | 10 |
-| Documentation | 9 | 1 | 10 |
-| **Total** | **29** | **18** | **47** |
+| Domain | Closed | Won't Do | Open | Total |
+|---|---|---|---|---|
+| Extraction | 3 | 0 | 0 | 3 |
+| Security | 7 | 5 | 0 | 12 |
+| Quality | 5 | 7 | 0 | 12 |
+| Performance | 5 | 5 | 0 | 10 |
+| Documentation | 9 | 1 | 0 | 10 |
+| Parallelism | 8 | 2 | 0 | 10 |
+| **Total** | **37** | **20** | **0** | **57** |
 
 All HIGH and CRITICAL severity items are either **Closed** or have documented rationale for Won't Do.
 All Won't Do items have explicit justification and are tracked for future initiatives.
+**All 10 parallelism gaps resolved (8 Closed, 2 Won't Do).**
 
 ### What was closed:
 - Expression recursion depth guard (prevents stack overflow DoS)
@@ -190,3 +254,5 @@ All Won't Do items have explicit justification and are tracked for future initia
 - Confusable identifier detection (Unicode data)
 - Complete Unicode case folding (Unicode data)
 - Proper double-quote/quoted identifier handling
+- Parallel lexing (Won't Do — complexity outweighs benefit for typical query sizes)
+- Parallel test infrastructure (Won't Do — handled via standard test coverage)
