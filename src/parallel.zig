@@ -381,6 +381,29 @@ test "parallelCount sequential fallback" {
     try std.testing.expectEqual(@as(usize, 3), count);
 }
 
+test "parallelValidateStatements mixed predicate" {
+    // Runs in both spice-enabled and spice-disabled modes.
+    const stmts = [_]ast.Statement{
+        .Commit,
+        .Rollback,
+        .SessionClose,
+        .Commit,
+        .Rollback,
+    };
+
+    const count = parallelValidateStatements(
+        &stmts,
+        struct {
+            fn notRollback(s: ast.Statement) bool {
+                return s != .Rollback;
+            }
+        }.notRollback,
+    );
+
+    // Commit + SessionClose + Commit = 3
+    try std.testing.expectEqual(@as(usize, 3), count);
+}
+
 test "deinitPool is safe when pool never initialized" {
     if (!build_options.enable_spice) return error.SkipZigTest;
     // When spice is enabled but pool was never used, deinit should be safe.
