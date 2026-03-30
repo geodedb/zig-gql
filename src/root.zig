@@ -41,6 +41,22 @@
 //! The parser also has a recursion depth limit (256 levels) to prevent
 //! stack overflow on deeply nested expressions.
 //!
+//! ## Thread Safety
+//!
+//! - **Lexer / Parser**: NOT thread-safe. Each thread must create its own
+//!   `Lexer`, `Parser`, and `ArenaAllocator` instances. Do not share a
+//!   single Lexer or Parser across threads.
+//! - **AST (Program, Statement, Expr, etc.)**: Immutable after parsing.
+//!   Safe to share read-only across threads without synchronization.
+//! - **printProgramJson**: Guarded by an internal mutex on the global GPA.
+//!   Safe to call concurrently. For maximum throughput, prefer
+//!   `printProgramJsonWith` with a per-thread allocator.
+//! - **parallel.zig functions**: Thread-safe. `getPool()`, `deinitPool()`,
+//!   `parallelProcessStatements()`, `parallelValidateStatements()`, and
+//!   `parallelCount()` use internal synchronization.
+//! - **language_metadata, status, token**: Read-only lookup tables. Safe
+//!   to use from any thread without synchronization.
+//!
 //! ## License
 //!
 //! Apache-2.0
