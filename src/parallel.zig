@@ -24,6 +24,19 @@
 //!
 //! Once parsed, AST nodes are immutable and safe to share across threads.
 //! The functions in this module operate on already-parsed AST data.
+//!
+//! ## Processing Already-Parsed Statements
+//!
+//! Rather than parallelizing the parse itself (which requires per-thread
+//! Lexer/Parser instances), this module provides fork/join APIs that
+//! operate on slices of already-parsed `ast.Statement` values:
+//!
+//! - `parallelProcessStatements` -- map a function over each statement
+//! - `parallelValidateStatements` -- count statements matching a predicate
+//! - `parallelCount` -- generic counted predicate over any slice
+//!
+//! All three automatically fall back to sequential execution when spice
+//! is disabled or the input slice is below the fork threshold.
 
 const std = @import("std");
 const ast = @import("ast.zig");
