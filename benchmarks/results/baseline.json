@@ -1,44 +1,80 @@
 {
   "version": 1,
-  "timestamp": "2026-03-30T16:35:59Z",
+  "timestamp": "2026-03-30T16:38:31Z",
   "git_commit": "unknown",
   "system": { "os": "linux", "arch": "x86_64" },
   "tiers": [
     {
       "name": "100",
       "query_count": 170,
-      "lex_ops_sec": 448313,
-      "parse_simple_ns": 27831,
-      "parse_rel_ns": 10837,
-      "parse_complex_ns": 17629,
-      "print_human_ns": 1611,
-      "print_json_ns": 46,
-      "temporal_ns": 5,
-      "keyword_ns": 19
+      "lex_ops_sec": 508443,
+      "parse_simple_ns": 7008,
+      "parse_rel_ns": 10743,
+      "parse_complex_ns": 17036,
+      "print_human_ns": 1491,
+      "print_json_ns": 39,
+      "temporal_ns": 4,
+      "keyword_ns": 17
     },
     {
       "name": "500",
       "query_count": 850,
-      "lex_ops_sec": 473415,
-      "parse_simple_ns": 6486,
-      "parse_rel_ns": 10524,
-      "parse_complex_ns": 18623,
-      "print_human_ns": 2349,
-      "print_json_ns": 61,
-      "temporal_ns": 6,
-      "keyword_ns": 24
+      "lex_ops_sec": 551862,
+      "parse_simple_ns": 6156,
+      "parse_rel_ns": 10528,
+      "parse_complex_ns": 15775,
+      "print_human_ns": 1428,
+      "print_json_ns": 37,
+      "temporal_ns": 4,
+      "keyword_ns": 17
     },
     {
       "name": "1K",
       "query_count": 1700,
-      "lex_ops_sec": 460289,
-      "parse_simple_ns": 7092,
-      "parse_rel_ns": 10647,
-      "parse_complex_ns": 17922,
-      "print_human_ns": 1493,
+      "lex_ops_sec": 512734,
+      "parse_simple_ns": 6725,
+      "parse_rel_ns": 10277,
+      "parse_complex_ns": 16784,
+      "print_human_ns": 1396,
+      "print_json_ns": 36,
+      "temporal_ns": 4,
+      "keyword_ns": 17
+    },
+    {
+      "name": "5K",
+      "query_count": 8500,
+      "lex_ops_sec": 510981,
+      "parse_simple_ns": 6786,
+      "parse_rel_ns": 11311,
+      "parse_complex_ns": 18396,
+      "print_human_ns": 1443,
+      "print_json_ns": 37,
+      "temporal_ns": 4,
+      "keyword_ns": 17
+    },
+    {
+      "name": "10K",
+      "query_count": 17000,
+      "lex_ops_sec": 509615,
+      "parse_simple_ns": 6991,
+      "parse_rel_ns": 11943,
+      "parse_complex_ns": 18992,
+      "print_human_ns": 1429,
       "print_json_ns": 40,
-      "temporal_ns": 6,
-      "keyword_ns": 18
+      "temporal_ns": 4,
+      "keyword_ns": 17
+    },
+    {
+      "name": "25K",
+      "query_count": 42500,
+      "lex_ops_sec": 457022,
+      "parse_simple_ns": 7209,
+      "parse_rel_ns": 11358,
+      "parse_complex_ns": 17840,
+      "print_human_ns": 1455,
+      "print_json_ns": 45,
+      "temporal_ns": 4,
+      "keyword_ns": 17
     }
   ]
 }
