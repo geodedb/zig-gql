@@ -3,7 +3,11 @@
     .version = "0.1.0",
     .fingerprint = 0xc0f961730d0d504f,
     .minimum_zig_version = "0.15.1",
-    .dependencies = .{},
+    .dependencies = .{
+        .spice = .{
+            .path = "../spice",
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",
