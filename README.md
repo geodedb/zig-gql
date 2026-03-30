@@ -13,7 +13,7 @@ A Zig library for gql
 - **Pretty Printers**: Human-readable and JSON output for AST programs
 - **Status Codes**: ISO/IEC 39075 diagnostic status codes and helpers
 - **Language Metadata**: Keyword tables, built-in functions, types, and procedures
-- **Zero Dependencies**: Pure Zig standard library only
+- **Minimal Dependencies**: Pure Zig standard library by default; optional [spice](https://gitlab.com/devnw/zig/spice) integration for parallelism (`-Dspice=true`)
 - **Memory Safe**: Arena-based allocation with no leaks
 - **Cross-Platform**: Linux, macOS, Windows support
 
@@ -57,6 +57,25 @@ pub fn main() !void {
     _ = program; // Use the parsed AST
 }
 ```
+
+## Parallelism
+
+The library includes optional parallel processing support via the [spice](https://gitlab.com/devnw/zig/spice) thread pool. Enable it at build time:
+
+```bash
+zig build -Dspice=true
+zig build test -Dspice=true
+```
+
+When spice is enabled, the `parallel` module provides fork/join APIs for processing parsed AST statements across multiple cores:
+
+- `parallelProcessStatements` -- map a function over each statement in parallel
+- `parallelValidateStatements` -- count statements matching a predicate in parallel
+- `parallelCount` -- generic parallel counted predicate over any slice
+
+When spice is **not** enabled (the default), all functions degrade to sequential execution with zero overhead. No code changes are required.
+
+**Thread Safety:** The Lexer and Parser are not thread-safe -- create separate instances per thread. Parsed AST nodes are immutable and safe to share. See the module doc comment in `src/root.zig` for full details.
 
 ## Requirements
 
