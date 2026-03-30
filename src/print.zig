@@ -42,13 +42,21 @@ pub const PrintJsonOptions = struct { verbose_temporals: bool = false, session_o
 /// P2-3: Static GPA for convenience wrapper
 var print_gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
 var print_gpa_init = false;
+/// Mutex guarding the global GPA to ensure thread-safe access when
+/// printProgramJson is called concurrently from parallel pipelines.
+var print_gpa_mutex: std.Thread.Mutex = .{};
 
 pub fn printProgramJson(w: anytype, prog: ast.Program) !void {
-    // P2-3: Use static GPA for temporary allocations
+    // Guard GPA initialization and allocator retrieval with a mutex so
+    // concurrent callers do not race on the lazy-init flag or the GPA
+    // internal state.
+    print_gpa_mutex.lock();
     if (!print_gpa_init) {
         print_gpa_init = true;
     }
-    return printProgramJsonWith(print_gpa.allocator(), w, prog, .{});
+    const alloc = print_gpa.allocator();
+    print_gpa_mutex.unlock();
+    return printProgramJsonWith(alloc, w, prog, .{});
 }
 
 /// P2-3: Now accepts allocator parameter for temporary allocations
