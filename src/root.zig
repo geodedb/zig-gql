@@ -53,7 +53,9 @@
 //!   `printProgramJsonWith` with a per-thread allocator.
 //! - **parallel.zig functions**: Thread-safe. `getPool()`, `deinitPool()`,
 //!   `parallelProcessStatements()`, `parallelValidateStatements()`, and
-//!   `parallelCount()` use internal synchronization.
+//!   `parallelCount()` use internal synchronization. Requires
+//!   `-Dthread_pool=true` to enable parallel execution; otherwise all ops
+//!   run sequentially.
 //! - **language_metadata, status, token**: Read-only lookup tables. Safe
 //!   to use from any thread without synchronization.
 //!
@@ -94,7 +96,7 @@ pub const temporal = @import("temporal.zig");
 /// Unicode identifier and encoding helpers used by the lexer/token layer.
 pub const unicode = @import("unicode/unicode_tables.zig");
 
-/// Parallel processing helpers (optional spice integration).
+/// Parallel processing helpers (optional thread-pool integration).
 pub const parallel = @import("parallel.zig");
 
 // ============================================================================

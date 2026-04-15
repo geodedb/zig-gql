@@ -7,19 +7,19 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const enable_spice = b.option(bool, "spice", "Enable spice-based parallelism") orelse false;
+    const enable_tp = b.option(bool, "thread_pool", "Enable thread-pool-based parallelism") orelse false;
 
     // Build options module
     const build_options = b.addOptions();
-    build_options.addOption(bool, "enable_spice", enable_spice);
+    build_options.addOption(bool, "enable_tp", enable_tp);
 
-    // Conditionally resolve spice dependency
-    const spice_mod: ?*std.Build.Module = if (enable_spice) blk: {
-        const spice_dep = b.dependency("spice", .{
+    // Conditionally resolve thread_pool dependency
+    const tp_mod: ?*std.Build.Module = if (enable_tp) blk: {
+        const tp_dep = b.dependency("thread_pool", .{
             .target = target,
             .optimize = optimize,
         });
-        break :blk spice_dep.module("spice");
+        break :blk tp_dep.module("thread_pool");
     } else null;
 
     // Main library module
@@ -29,8 +29,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     module.addOptions("build_options", build_options);
-    if (spice_mod) |sm| {
-        module.addImport("spice", sm);
+    if (tp_mod) |tm| {
+        module.addImport("thread_pool", tm);
     }
 
     // Unit tests (run tests defined in the module itself)
@@ -41,8 +41,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     unit_test_mod.addOptions("build_options", build_options);
-    if (spice_mod) |sm| {
-        unit_test_mod.addImport("spice", sm);
+    if (tp_mod) |tm| {
+        unit_test_mod.addImport("thread_pool", tm);
     }
     const unit_tests = b.addTest(.{
         .root_module = unit_test_mod,
@@ -61,8 +61,8 @@ pub fn build(b: *std.Build) void {
         },
     });
     integration_mod.addOptions("build_options", build_options);
-    if (spice_mod) |sm| {
-        integration_mod.addImport("spice", sm);
+    if (tp_mod) |tm| {
+        integration_mod.addImport("thread_pool", tm);
     }
     const integration_tests = b.addTest(.{
         .root_module = integration_mod,
@@ -78,8 +78,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     check_mod.addOptions("build_options", build_options);
-    if (spice_mod) |sm| {
-        check_mod.addImport("spice", sm);
+    if (tp_mod) |tm| {
+        check_mod.addImport("thread_pool", tm);
     }
     const check = b.addTest(.{
         .root_module = check_mod,

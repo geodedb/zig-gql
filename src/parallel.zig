@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024-2025 CodePros
 
-//! Parallel GQL operations using spice heartbeat scheduling.
+//! Parallel GQL operations using thread-pool flat chunking.
 //!
 //! Provides parallel processing for statement validation and analysis.
-//! When compiled without `-Dspice=true`, all functions degrade to
+//! When compiled without `-Dthread_pool=true`, all functions degrade to
 //! sequential execution with zero overhead.
 //!
 //! ## Parallel Parsing Pattern
@@ -28,63 +28,58 @@
 //! ## Processing Already-Parsed Statements
 //!
 //! Rather than parallelizing the parse itself (which requires per-thread
-//! Lexer/Parser instances), this module provides fork/join APIs that
+//! Lexer/Parser instances), this module provides flat-chunk APIs that
 //! operate on slices of already-parsed `ast.Statement` values:
 //!
 //! - `parallelProcessStatements` -- map a function over each statement
 //! - `parallelValidateStatements` -- count statements matching a predicate
 //! - `parallelCount` -- generic counted predicate over any slice
 //!
-//! All three automatically fall back to sequential execution when spice
+//! All three automatically fall back to sequential execution when thread-pool
 //! is disabled or the input slice is below the fork threshold.
 
 const std = @import("std");
 const ast = @import("ast.zig");
 const build_options = @import("build_options");
 
-const spice = if (build_options.enable_spice) @import("spice") else struct {
+const tp = if (build_options.enable_tp) @import("thread_pool") else struct {
     pub const ThreadPool = void;
-    pub const ThreadPoolConfig = void;
-    pub const Task = struct {};
-    pub fn Future(comptime I: type, comptime O: type) type {
-        _ = I;
-        _ = O;
-        return struct {
-            pub fn init() @This() {
-                return .{};
-            }
-        };
-    }
+    pub const WaitGroup = void;
+    pub const BatchTask = struct {};
+    pub const TaskContext = struct {};
 };
+
+/// Maximum number of chunks for flat parallel work dispatch.
+const MAX_CHUNKS: usize = 64;
 
 // ============================================================================
 // Global Thread Pool (lazy-initialized, mutex-guarded)
 // ============================================================================
 
 var pool_mutex: std.Thread.Mutex = .{};
-var global_pool: if (build_options.enable_spice) ?spice.ThreadPool else void =
-    if (build_options.enable_spice) null else {};
+var global_pool: if (build_options.enable_tp) ?tp.ThreadPool else void =
+    if (build_options.enable_tp) null else {};
 
-/// Returns a pointer to the global spice thread pool, initializing it on
-/// first access.  Returns `void` when spice is disabled.
-pub fn getPool() if (build_options.enable_spice) *spice.ThreadPool else void {
-    if (!build_options.enable_spice) return;
+/// Returns a pointer to the global thread pool, initializing it on first
+/// access.  Returns `void` when thread-pool is disabled.
+pub fn getPool() if (build_options.enable_tp) *tp.ThreadPool else void {
+    if (!build_options.enable_tp) return;
 
     pool_mutex.lock();
     defer pool_mutex.unlock();
 
     if (global_pool == null) {
-        global_pool = spice.ThreadPool.init(std.heap.page_allocator);
-        global_pool.?.start(.{});
+        global_pool = tp.ThreadPool.init(std.heap.page_allocator, .{}) catch
+            @panic("parallel: failed to initialize thread pool");
     }
     return &global_pool.?;
 }
 
 /// Tears down the global thread pool, joining all background workers.
-/// Safe to call when spice is disabled (no-op) or when the pool was
+/// Safe to call when thread-pool is disabled (no-op) or when the pool was
 /// never initialized.
 pub fn deinitPool() void {
-    if (!build_options.enable_spice) return;
+    if (!build_options.enable_tp) return;
 
     pool_mutex.lock();
     defer pool_mutex.unlock();
@@ -99,17 +94,9 @@ pub fn deinitPool() void {
 // Parallel Statement Processing
 // ============================================================================
 
-/// Context for fork/join statement processing.
-pub fn StatementContext(comptime R: type) type {
-    return struct {
-        statements: []const ast.Statement,
-        results: []R,
-    };
-}
-
 /// Process parsed GQL statements in parallel, writing one result per
 /// statement into `results`.  Falls back to sequential execution when
-/// spice is disabled or the slice is shorter than 8 elements.
+/// thread-pool is disabled or the slice is shorter than 8 elements.
 ///
 /// `processFn` is called once per statement and must be a pure function
 /// (no mutable captures).
@@ -121,7 +108,7 @@ pub fn parallelProcessStatements(
 ) void {
     std.debug.assert(statements.len == results.len);
 
-    if (!build_options.enable_spice or statements.len < 8) {
+    if (!build_options.enable_tp or statements.len < 8) {
         for (statements, 0..) |s, i| {
             results[i] = processFn(s);
         }
@@ -129,52 +116,64 @@ pub fn parallelProcessStatements(
     }
 
     const pool = getPool();
-    const Ctx = StatementContext(R);
-    pool.call(void, ParallelStmtTask(R, processFn).task, Ctx{
-        .statements = statements,
-        .results = results,
-    });
-}
 
-fn ParallelStmtTask(comptime R: type, comptime processFn: fn (ast.Statement) R) type {
-    const Ctx = StatementContext(R);
-    return struct {
-        pub fn task(t: *spice.Task, ctx: Ctx) void {
-            const stmts = ctx.statements;
-            const results = ctx.results;
+    const n = statements.len;
+    const chunk_count = @min(n, MAX_CHUNKS);
+    const chunk_size = (n + chunk_count - 1) / chunk_count;
 
-            if (stmts.len < 4) {
-                for (stmts, 0..) |s, i| {
-                    results[i] = processFn(s);
-                }
-                return;
-            }
-
-            const mid = stmts.len / 2;
-            const left_ctx = Ctx{ .statements = stmts[0..mid], .results = results[0..mid] };
-            const right_ctx = Ctx{ .statements = stmts[mid..], .results = results[mid..] };
-
-            var fut = spice.Future(Ctx, void).init();
-            fut.fork(t, task, right_ctx);
-
-            t.call(void, task, left_ctx);
-            if (fut.join(t)) |_| {} else t.call(void, task, right_ctx);
-        }
+    const ProcessChunkCtx = struct {
+        statements: []const ast.Statement,
+        results: []R,
     };
+
+    var chunks: [MAX_CHUNKS]ProcessChunkCtx = undefined;
+    var batch: [MAX_CHUNKS]tp.BatchTask = undefined;
+    var actual_chunks: usize = 0;
+
+    var offset: usize = 0;
+    while (offset < n) : (offset += chunk_size) {
+        const end = @min(offset + chunk_size, n);
+        chunks[actual_chunks] = .{
+            .statements = statements[offset..end],
+            .results = results[offset..end],
+        };
+        batch[actual_chunks] = .{
+            .task_fn = struct {
+                fn run(ctx_ptr: *anyopaque, _: *tp.TaskContext) void {
+                    const c: *ProcessChunkCtx = @ptrCast(@alignCast(ctx_ptr));
+                    for (c.statements, 0..) |s, i| {
+                        c.results[i] = processFn(s);
+                    }
+                }
+            }.run,
+            .ctx = @ptrCast(&chunks[actual_chunks]),
+        };
+        actual_chunks += 1;
+    }
+
+    var wg = pool.waitGroup();
+    pool.submitBatch(batch[0..actual_chunks], .{ .wait_group = &wg }) catch {
+        // Sequential fallback on submit error.
+        for (statements, 0..) |s, i| {
+            results[i] = processFn(s);
+        }
+        return;
+    };
+    wg.wait();
 }
 
 // ============================================================================
 // Parallel Count
 // ============================================================================
 
-/// Count items matching a predicate, using fork/join parallelism when
-/// spice is enabled and the input is large enough (>= 64 items).
+/// Count items matching a predicate, using flat-chunk parallelism when
+/// thread-pool is enabled and the input is large enough (>= 64 items).
 pub fn parallelCount(
     comptime T: type,
     items: []const T,
     comptime predicate: fn (T) bool,
 ) usize {
-    if (!build_options.enable_spice or items.len < 64) {
+    if (!build_options.enable_tp or items.len < 64) {
         var count: usize = 0;
         for (items) |item| {
             if (predicate(item)) count += 1;
@@ -183,33 +182,59 @@ pub fn parallelCount(
     }
 
     const pool = getPool();
-    return pool.call(usize, ParallelCountTask(T, predicate).task, items);
-}
 
-fn ParallelCountTask(comptime T: type, comptime predicate: fn (T) bool) type {
-    return struct {
-        pub fn task(t: *spice.Task, items: []const T) usize {
-            if (items.len < 32) {
-                var count: usize = 0;
-                for (items) |item| {
-                    if (predicate(item)) count += 1;
-                }
-                return count;
-            }
+    const n = items.len;
+    const chunk_count = @min(n, MAX_CHUNKS);
+    const chunk_size = (n + chunk_count - 1) / chunk_count;
 
-            const mid = items.len / 2;
-            const left = items[0..mid];
-            const right = items[mid..];
-
-            var fut = spice.Future([]const T, usize).init();
-            fut.fork(t, task, right);
-
-            const left_count = t.call(usize, task, left);
-            const right_count = if (fut.join(t)) |val| val else t.call(usize, task, right);
-
-            return left_count + right_count;
-        }
+    const CountChunkCtx = struct {
+        items: []const T,
+        count: usize,
     };
+
+    var chunks: [MAX_CHUNKS]CountChunkCtx = undefined;
+    var batch: [MAX_CHUNKS]tp.BatchTask = undefined;
+    var actual_chunks: usize = 0;
+
+    var offset: usize = 0;
+    while (offset < n) : (offset += chunk_size) {
+        const end = @min(offset + chunk_size, n);
+        chunks[actual_chunks] = .{
+            .items = items[offset..end],
+            .count = 0,
+        };
+        batch[actual_chunks] = .{
+            .task_fn = struct {
+                fn run(ctx_ptr: *anyopaque, _: *tp.TaskContext) void {
+                    const c: *CountChunkCtx = @ptrCast(@alignCast(ctx_ptr));
+                    var cnt: usize = 0;
+                    for (c.items) |item| {
+                        if (predicate(item)) cnt += 1;
+                    }
+                    c.count = cnt;
+                }
+            }.run,
+            .ctx = @ptrCast(&chunks[actual_chunks]),
+        };
+        actual_chunks += 1;
+    }
+
+    var wg = pool.waitGroup();
+    pool.submitBatch(batch[0..actual_chunks], .{ .wait_group = &wg }) catch {
+        // Sequential fallback on submit error.
+        var count: usize = 0;
+        for (items) |item| {
+            if (predicate(item)) count += 1;
+        }
+        return count;
+    };
+    wg.wait();
+
+    var total: usize = 0;
+    for (chunks[0..actual_chunks]) |c| {
+        total += c.count;
+    }
+    return total;
 }
 
 // ============================================================================
@@ -218,13 +243,13 @@ fn ParallelCountTask(comptime T: type, comptime predicate: fn (T) bool) type {
 
 /// Apply a validation function to each statement in parallel, returning
 /// the count of statements for which `validateFn` returns `true`.
-/// Falls back to sequential processing when spice is disabled or input
+/// Falls back to sequential processing when thread-pool is disabled or input
 /// is shorter than 8 items.
 pub fn parallelValidateStatements(
     statements: []const ast.Statement,
     comptime validateFn: fn (ast.Statement) bool,
 ) usize {
-    if (!build_options.enable_spice or statements.len < 8) {
+    if (!build_options.enable_tp or statements.len < 8) {
         var count: usize = 0;
         for (statements) |s| {
             if (validateFn(s)) count += 1;
@@ -233,54 +258,80 @@ pub fn parallelValidateStatements(
     }
 
     const pool = getPool();
-    return pool.call(usize, ParallelValidateTask(validateFn).task, statements);
-}
 
-fn ParallelValidateTask(comptime validateFn: fn (ast.Statement) bool) type {
-    return struct {
-        pub fn task(t: *spice.Task, stmts: []const ast.Statement) usize {
-            if (stmts.len < 4) {
-                var count: usize = 0;
-                for (stmts) |s| {
-                    if (validateFn(s)) count += 1;
-                }
-                return count;
-            }
+    const n = statements.len;
+    const chunk_count = @min(n, MAX_CHUNKS);
+    const chunk_size = (n + chunk_count - 1) / chunk_count;
 
-            const mid = stmts.len / 2;
-            const left = stmts[0..mid];
-            const right = stmts[mid..];
-
-            var fut = spice.Future([]const ast.Statement, usize).init();
-            fut.fork(t, task, right);
-
-            const left_count = t.call(usize, task, left);
-            const right_count = if (fut.join(t)) |val| val else t.call(usize, task, right);
-
-            return left_count + right_count;
-        }
+    const ValidateChunkCtx = struct {
+        statements: []const ast.Statement,
+        count: usize,
     };
+
+    var chunks: [MAX_CHUNKS]ValidateChunkCtx = undefined;
+    var batch: [MAX_CHUNKS]tp.BatchTask = undefined;
+    var actual_chunks: usize = 0;
+
+    var offset: usize = 0;
+    while (offset < n) : (offset += chunk_size) {
+        const end = @min(offset + chunk_size, n);
+        chunks[actual_chunks] = .{
+            .statements = statements[offset..end],
+            .count = 0,
+        };
+        batch[actual_chunks] = .{
+            .task_fn = struct {
+                fn run(ctx_ptr: *anyopaque, _: *tp.TaskContext) void {
+                    const c: *ValidateChunkCtx = @ptrCast(@alignCast(ctx_ptr));
+                    var cnt: usize = 0;
+                    for (c.statements) |s| {
+                        if (validateFn(s)) cnt += 1;
+                    }
+                    c.count = cnt;
+                }
+            }.run,
+            .ctx = @ptrCast(&chunks[actual_chunks]),
+        };
+        actual_chunks += 1;
+    }
+
+    var wg = pool.waitGroup();
+    pool.submitBatch(batch[0..actual_chunks], .{ .wait_group = &wg }) catch {
+        // Sequential fallback on submit error.
+        var count: usize = 0;
+        for (statements) |s| {
+            if (validateFn(s)) count += 1;
+        }
+        return count;
+    };
+    wg.wait();
+
+    var total: usize = 0;
+    for (chunks[0..actual_chunks]) |c| {
+        total += c.count;
+    }
+    return total;
 }
 
 // ============================================================================
 // Tests
 // ============================================================================
 
-test "getPool returns void when spice disabled" {
-    if (build_options.enable_spice) return error.SkipZigTest;
+test "getPool returns void when thread-pool disabled" {
+    if (build_options.enable_tp) return error.SkipZigTest;
     const result = getPool();
     try std.testing.expectEqual({}, result);
 }
 
-test "deinitPool is safe when spice disabled" {
-    if (build_options.enable_spice) return error.SkipZigTest;
+test "deinitPool is safe when thread-pool disabled" {
+    if (build_options.enable_tp) return error.SkipZigTest;
     // Should be a no-op without crashing.
     deinitPool();
     deinitPool(); // idempotent
 }
 
 test "parallelProcessStatements sequential fallback" {
-    if (build_options.enable_spice) return error.SkipZigTest;
+    if (build_options.enable_tp) return error.SkipZigTest;
 
     // Build a small set of statements — the sequential path runs for < 8
     const stmts = [_]ast.Statement{
@@ -307,7 +358,7 @@ test "parallelProcessStatements sequential fallback" {
 }
 
 test "parallelValidateStatements sequential fallback" {
-    if (build_options.enable_spice) return error.SkipZigTest;
+    if (build_options.enable_tp) return error.SkipZigTest;
 
     const stmts = [_]ast.Statement{
         .Commit,
@@ -329,7 +380,7 @@ test "parallelValidateStatements sequential fallback" {
 }
 
 test "parallelValidateStatements always-true returns full count" {
-    if (build_options.enable_spice) return error.SkipZigTest;
+    if (build_options.enable_tp) return error.SkipZigTest;
 
     const stmts = [_]ast.Statement{
         .Commit,
@@ -350,7 +401,7 @@ test "parallelValidateStatements always-true returns full count" {
 }
 
 test "parallelValidateStatements always-false returns zero" {
-    if (build_options.enable_spice) return error.SkipZigTest;
+    if (build_options.enable_tp) return error.SkipZigTest;
 
     const stmts = [_]ast.Statement{
         .Commit,
@@ -370,7 +421,7 @@ test "parallelValidateStatements always-false returns zero" {
 }
 
 test "parallelCount sequential fallback" {
-    if (build_options.enable_spice) return error.SkipZigTest;
+    if (build_options.enable_tp) return error.SkipZigTest;
 
     const items = [_]i32{ 1, 2, 3, 4, 5, 6 };
     const count = parallelCount(i32, &items, struct {
@@ -382,7 +433,7 @@ test "parallelCount sequential fallback" {
 }
 
 test "parallelValidateStatements mixed predicate" {
-    // Runs in both spice-enabled and spice-disabled modes.
+    // Runs in both thread-pool-enabled and thread-pool-disabled modes.
     const stmts = [_]ast.Statement{
         .Commit,
         .Rollback,
@@ -405,8 +456,8 @@ test "parallelValidateStatements mixed predicate" {
 }
 
 test "deinitPool is safe when pool never initialized" {
-    if (!build_options.enable_spice) return error.SkipZigTest;
-    // When spice is enabled but pool was never used, deinit should be safe.
+    if (!build_options.enable_tp) return error.SkipZigTest;
+    // When thread-pool is enabled but pool was never used, deinit should be safe.
     // Note: we cannot easily test this because the global pool may already
     // be initialized by other tests. Just verify no crash.
     deinitPool();
