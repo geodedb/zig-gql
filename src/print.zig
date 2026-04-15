@@ -251,7 +251,7 @@ fn collectTemporalsList(allocator: std.mem.Allocator, prog: ast.Program) !std.Ar
                     try walkExpr(ally_inner, dst, b.right.*);
                 },
                 .Member => |m| try walkExpr(ally_inner, dst, m.target.*),
-                .PropertyAccess => |_| {}, // No nested expressions to walk
+                .PropertyAccess => {}, // No nested expressions to walk
                 .Index => |idx| {
                     try walkExpr(ally_inner, dst, idx.target.*);
                     try walkExpr(ally_inner, dst, idx.index.*);
@@ -400,7 +400,7 @@ fn printGraphPattern(w: anytype, gp: ast.GraphPattern, pad: usize) !void {
     try w.print("GraphPattern chains={d}\n", .{gp.chains.len});
     for (gp.chains, 0..) |ch, i| {
         try indent(w, pad + 2);
-        try w.print("Chain[{d}]{s}{s}\n", .{ i, if (ch.name) |_| ":" else "", if (ch.name) |n| n else "" });
+        try w.print("Chain[{d}]{s}{s}\n", .{ i, if (ch.name != null) ":" else "", if (ch.name) |n| n else "" });
         for (ch.hops, 0..) |hp, j| {
             try indent(w, pad + 4);
             try w.print("Hop[{d}] ", .{j});
@@ -418,7 +418,7 @@ fn printNode(w: anytype, n: ast.NodePattern) !void {
     try w.writeByte('(');
     if (n.name) |nm| try w.print("{s}", .{nm});
     for (n.labels) |l| try w.print(":{s}", .{l});
-    if (n.props) |_| try w.print(" {{…}}", .{});
+    if (n.props != null) try w.print(" {{…}}", .{});
     try w.writeByte(')');
 }
 
@@ -437,7 +437,7 @@ fn printRel(w: anytype, r: ast.RelPattern) !void {
             try w.print("..", .{});
         }
     }
-    if (r.props) |_| try w.print(" {{…}}", .{});
+    if (r.props != null) try w.print(" {{…}}", .{});
     try w.writeByte(']');
 }
 
@@ -693,7 +693,7 @@ pub fn printExprWith(w: anytype, e: ast.Expr, prec: u8, opts: PrintOptions) !voi
                 try w.print(" IS UNKNOWN", .{});
             }
         },
-        .Map => |_| try w.print("{{…}}", .{}),
+        .Map => try w.print("{{…}}", .{}),
         .PatternComp => |pc| {
             if (pc.alias) |al| try w.print("{s} = ", .{al});
             try w.writeByte('[');
