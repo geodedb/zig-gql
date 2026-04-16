@@ -423,26 +423,26 @@ test "temporal parse + compare + normalize" {
     const dt2 = try parseDateTime("2024-08-12T11:15+01:00", true);
     try std.testing.expect((try compareDateTimeParsed(dt1, dt2)) == 0);
     // Normalization output
-    var buf = std.ArrayList(u8).initCapacity(std.testing.allocator, 64) catch unreachable;
-    defer buf.deinit(std.testing.allocator);
-    try formatDateTime(buf.writer(std.testing.allocator), dt1, .{});
-    try std.testing.expect(std.mem.eql(u8, buf.items, "2024-08-12T10:15Z"));
+    var aw: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer aw.deinit();
+    try formatDateTime(&aw.writer, dt1, .{});
+    try std.testing.expect(std.mem.eql(u8, aw.written(), "2024-08-12T10:15Z"));
 }
 
 test "formatDateTime normalizes +HH to +HH:00" {
     const dt = try parseDateTime("2024-01-02T03:04+05", true);
-    var buf = std.ArrayList(u8).initCapacity(std.testing.allocator, 64) catch unreachable;
-    defer buf.deinit(std.testing.allocator);
-    try formatDateTime(buf.writer(std.testing.allocator), dt, .{});
-    try std.testing.expect(std.mem.indexOf(u8, buf.items, "+05:00") != null);
+    var aw: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer aw.deinit();
+    try formatDateTime(&aw.writer, dt, .{});
+    try std.testing.expect(std.mem.indexOf(u8, aw.written(), "+05:00") != null);
 }
 
 test "formatDateTime preserves -HH:MM" {
     const dt = try parseDateTime("2024-01-02T03:04-05:30", true);
-    var buf = std.ArrayList(u8).initCapacity(std.testing.allocator, 64) catch unreachable;
-    defer buf.deinit(std.testing.allocator);
-    try formatDateTime(buf.writer(std.testing.allocator), dt, .{});
-    try std.testing.expect(std.mem.indexOf(u8, buf.items, "-05:30") != null);
+    var aw: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer aw.deinit();
+    try formatDateTime(&aw.writer, dt, .{});
+    try std.testing.expect(std.mem.indexOf(u8, aw.written(), "-05:30") != null);
 }
 
 test "parseOffsetMinutes handles Z, +HH, and -HH:MM" {

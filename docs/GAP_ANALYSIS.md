@@ -149,31 +149,31 @@ Convenience re-exports: `Lexer`, `Parser`, `Program`, `Statement`, `Expr`, `Toke
 
 Last reviewed: 2026-03-30
 
-The GQL library currently operates as a purely single-threaded, synchronous library with zero concurrency primitives. The `spice` dependency (heartbeat-scheduled fork/join parallelism used across the devnw Zig ecosystem) is not declared, imported, or used anywhere. The README advertises "Zero Dependencies: Pure Zig standard library only" — this conflicts with the ecosystem expectation that libraries use `spice` for parallelism.
+The GQL library currently operates as a purely single-threaded, synchronous library with zero concurrency primitives. The `thread-pool` dependency (bounded thread pool used across the devnw Zig ecosystem) is not declared, imported, or used anywhere. The README advertises "Zero Dependencies: Pure Zig standard library only" — this conflicts with the ecosystem expectation that libraries use `thread-pool` for parallelism.
 
-### Missing: spice dependency
+### Missing: thread-pool dependency
 
-`build.zig.zon` declares `.dependencies = .{}`. The `spice` library is used by 30+ sibling projects (ebnf, dns, quic, tls, config, json, yaml, etc.) for structured parallelism via `ThreadPool`, `Worker`, `Task`, and `Future` primitives.
+`build.zig.zon` declares `.dependencies = .{}`. The `thread-pool` library is used by 30+ sibling projects (ebnf, dns, quic, tls, config, json, yaml, etc.) for structured parallelism via `ThreadPool`, `Worker`, `Task`, and `Future` primitives.
 
 ### Gaps
 
 | Gap-ID | Severity | Gap | Status |
 |---|---|---|---|
-| GAP-PAR-001 | HIGH | `spice` dependency not declared in `build.zig.zon` | **Closed** — added `.spice = .{ .path = "../spice" }` to `build.zig.zon` |
-| GAP-PAR-002 | HIGH | No `parallel.zig` module for parallel GQL operations | **Closed** — created `src/parallel.zig` with optional spice import, global thread pool (lazy init/deinit), sequential fallback, and tests |
+| GAP-PAR-001 | HIGH | `thread-pool` dependency not declared in `build.zig.zon` | **Closed** — added `.thread_pool = .{ .path = "../thread-pool" }` to `build.zig.zon` |
+| GAP-PAR-002 | HIGH | No `parallel.zig` module for parallel GQL operations | **Closed** — created `src/parallel.zig` with optional thread-pool import, global thread pool (lazy init/deinit), sequential fallback, and tests |
 | GAP-PAR-003 | HIGH | No parallel statement parsing | **Closed** — documented multi-instance pattern for parallel parsing; `parallelProcessStatements` and `parallelValidateStatements` provide fork/join processing of already-parsed statements |
 | GAP-PAR-004 | MEDIUM | No parallel validation/analysis API | **Closed** — `parallelValidateStatements()`, `parallelProcessStatements()`, and `parallelCount()` implemented in `src/parallel.zig` with tests |
 | GAP-PAR-005 | MEDIUM | No parallel lexing support | **Won't Do** — parallel lexing requires partitioning source text at token boundaries, which cannot be determined without lexing. The complexity/risk outweighs the benefit for typical GQL query sizes. Callers needing throughput should use separate Lexer instances per thread. |
 | GAP-PAR-006 | MEDIUM | Global mutable GPA in `print.zig` is not thread-safe | **Closed** — added `print_gpa_mutex` guarding GPA initialization and allocator retrieval in `printProgramJson()` |
-| GAP-PAR-007 | MEDIUM | `build.zig` does not expose spice as optional module | **Closed** — added `-Dspice=true` build option, `build_options` module with `enable_spice`, and conditional spice module import for all build targets |
-| GAP-PAR-008 | LOW | No parallel test execution infrastructure | **Won't Do** — handled via different controls. Standard unit tests cover sequential fallback paths; spice-enabled tests cover parallel paths. Separate test infrastructure adds maintenance burden without proportional value. |
+| GAP-PAR-007 | MEDIUM | `build.zig` does not expose thread-pool as optional module | **Closed** — added `-Dthread-pool=true` build option, `build_options` module with `enable_thread_pool`, and conditional thread-pool module import for all build targets |
+| GAP-PAR-008 | LOW | No parallel test execution infrastructure | **Won't Do** — handled via different controls. Standard unit tests cover sequential fallback paths; thread-pool-enabled tests cover parallel paths. Separate test infrastructure adds maintenance burden without proportional value. |
 | GAP-PAR-009 | LOW | No thread-safety documentation | **Closed** — thread-safety documentation added to `src/root.zig` and `src/parallel.zig` module doc comments |
-| GAP-PAR-010 | LOW | README claims "Zero Dependencies" — needs update | **Closed** — updated README to describe optional spice dependency and added Parallelism section |
+| GAP-PAR-010 | LOW | README claims "Zero Dependencies" — needs update | **Closed** — updated README to describe optional thread-pool dependency and added Parallelism section |
 
 ### Implementation Priority
 
 **Phase 1 — Foundation (GAP-PAR-001, GAP-PAR-002, GAP-PAR-007, GAP-PAR-010):**
-Add spice as an optional dependency gated by build option. Create the `parallel.zig` module with thread pool management and sequential fallback. Update README.
+Add thread-pool as an optional dependency gated by build option. Create the `parallel.zig` module with thread pool management and sequential fallback. Update README.
 
 **Phase 2 — Parallel Parsing (GAP-PAR-003, GAP-PAR-006):**
 Add fork/join parallel statement parsing for multi-statement programs. Fix the thread-safety issue in `print.zig` before enabling any parallelism.
@@ -186,24 +186,24 @@ Add parallel safety tests and document thread-safety guarantees.
 
 ### Reference: ebnf pattern
 
-The ebnf project (`/home/benji/src/devnw/zig/ebnf`) demonstrates the canonical pattern for optional spice integration:
+The ebnf project (`/home/benji/src/devnw/zig/ebnf`) demonstrates the canonical pattern for optional thread-pool integration:
 
 ```zig
 // src/parallel.zig — conditional import
-const spice = if (build_options.enable_spice) @import("spice") else struct {
+const thread_pool = if (build_options.enable_thread_pool) @import("thread-pool") else struct {
     pub const ThreadPool = void;
     pub fn Future(comptime I: type, comptime O: type) type { ... }
 };
 
 // Global pool with lazy init
-var global_pool: if (build_options.enable_spice) ?spice.ThreadPool else void = ...;
+var global_pool: if (build_options.enable_thread_pool) ?thread_pool.ThreadPool else void = ...;
 
 // Parallel operation with sequential fallback
 pub fn parallelProcessRules(rules: []Rule, ...) usize {
-    if (!build_options.enable_spice or rules.len < 8) {
+    if (!build_options.enable_thread_pool or rules.len < 8) {
         // Sequential fallback
     }
-    // Fork/join with spice.Future
+    // Fork/join with thread_pool.Future
 }
 ```
 
@@ -231,7 +231,8 @@ All HIGH and CRITICAL severity items are either **Closed** or have documented ra
 All Won't Do items have explicit justification and are tracked for future initiatives.
 **All 10 parallelism gaps resolved (8 Closed, 2 Won't Do).**
 
-### What was closed:
+### What was closed
+
 - Expression recursion depth guard (prevents stack overflow DoS)
 - Decimal scale clamping and float range validation (prevents panics)
 - Temporal fraction digit cap (prevents u8 overflow)
@@ -247,11 +248,11 @@ All Won't Do items have explicit justification and are tracked for future initia
 - encryption_key sensitivity warning added
 - Full benchmark suite (14 benchmarks, 6-tier scale bench, regression detection, baseline tracking)
 
-### What remains for future initiatives:
+### What remains for future initiatives
+
 - Parser modularization (split 6,628-line file)
 - Lookahead buffer (architectural optimization)
 - RETURN clause deduplication (11 sites)
-
 - Confusable identifier detection (Unicode data)
 - Complete Unicode case folding (Unicode data)
 - Proper double-quote/quoted identifier handling

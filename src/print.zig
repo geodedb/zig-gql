@@ -447,10 +447,10 @@ pub fn printExpr(w: anytype, e: ast.Expr, prec: u8) !void {
 
 // Helper to stringify a single expression with options, for granular tests and utilities.
 pub fn stringifyExprAlloc(allocator: std.mem.Allocator, e: ast.Expr, opts: PrintOptions) ![]u8 {
-    var buf = std.ArrayList(u8).initCapacity(allocator, 0) catch return error.OutOfMemory;
-    errdefer buf.deinit(allocator);
-    try printExprWith(buf.writer(allocator), e, 0, opts);
-    return buf.toOwnedSlice(allocator);
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+    try printExprWith(&aw.writer, e, 0, opts);
+    return aw.toOwnedSlice();
 }
 
 pub fn printExprWith(w: anytype, e: ast.Expr, prec: u8, opts: PrintOptions) !void {
@@ -491,40 +491,40 @@ pub fn printExprWith(w: anytype, e: ast.Expr, prec: u8, opts: PrintOptions) !voi
         } else {
             // P2-3: Use provided allocator instead of page_allocator
             const alloc = opts.allocator orelse return error.AllocatorRequired;
-            var buf = std.ArrayList(u8).empty;
-            defer buf.deinit(alloc);
-            try temporal.formatDate(buf.writer(alloc), d.parsed);
-            try w.print("DATE\"{s}\"", .{buf.items});
+            var aw: std.Io.Writer.Allocating = .init(alloc);
+            defer aw.deinit();
+            try temporal.formatDate(&aw.writer, d.parsed);
+            try w.print("DATE\"{s}\"", .{aw.written()});
         },
         .DateTime => |dt| if (!opts.normalize_temporals) {
             try w.print("DATETIME\"{s}\"", .{dt.raw});
         } else {
             // P2-3: Use provided allocator instead of page_allocator
             const alloc = opts.allocator orelse return error.AllocatorRequired;
-            var buf = std.ArrayList(u8).empty;
-            defer buf.deinit(alloc);
-            try temporal.formatDateTime(buf.writer(alloc), dt.parsed, .{ .clamp_frac_digits = opts.clamp_frac_digits });
-            try w.print("DATETIME\"{s}\"", .{buf.items});
+            var aw: std.Io.Writer.Allocating = .init(alloc);
+            defer aw.deinit();
+            try temporal.formatDateTime(&aw.writer, dt.parsed, .{ .clamp_frac_digits = opts.clamp_frac_digits });
+            try w.print("DATETIME\"{s}\"", .{aw.written()});
         },
         .Time => |t| if (!opts.normalize_temporals) {
             try w.print("TIME\"{s}\"", .{t.raw});
         } else {
             // P2-3: Use provided allocator instead of page_allocator
             const alloc = opts.allocator orelse return error.AllocatorRequired;
-            var buf = std.ArrayList(u8).empty;
-            defer buf.deinit(alloc);
-            try temporal.formatTime(buf.writer(alloc), t.parsed, .{ .clamp_frac_digits = opts.clamp_frac_digits });
-            try w.print("TIME\"{s}\"", .{buf.items});
+            var aw: std.Io.Writer.Allocating = .init(alloc);
+            defer aw.deinit();
+            try temporal.formatTime(&aw.writer, t.parsed, .{ .clamp_frac_digits = opts.clamp_frac_digits });
+            try w.print("TIME\"{s}\"", .{aw.written()});
         },
         .LocalDateTime => |ldt| if (!opts.normalize_temporals) {
             try w.print("LOCAL DATETIME\"{s}\"", .{ldt.raw});
         } else {
             // P2-3: Use provided allocator instead of page_allocator
             const alloc = opts.allocator orelse return error.AllocatorRequired;
-            var buf = std.ArrayList(u8).empty;
-            defer buf.deinit(alloc);
-            try temporal.formatDateTime(buf.writer(alloc), ldt.parsed, .{ .clamp_frac_digits = opts.clamp_frac_digits });
-            try w.print("LOCAL DATETIME\"{s}\"", .{buf.items});
+            var aw: std.Io.Writer.Allocating = .init(alloc);
+            defer aw.deinit();
+            try temporal.formatDateTime(&aw.writer, ldt.parsed, .{ .clamp_frac_digits = opts.clamp_frac_digits });
+            try w.print("LOCAL DATETIME\"{s}\"", .{aw.written()});
         },
         .StartsWith => |sw| {
             try printExprWith(w, sw.value.*, 0, opts);
@@ -786,53 +786,54 @@ pub fn printExprWith(w: anytype, e: ast.Expr, prec: u8, opts: PrintOptions) !voi
 
 test "printProgramHuman produces output for empty program" {
     const prog = ast.Program{ .statements = &.{} };
-    var buf = std.ArrayList(u8).initCapacity(std.testing.allocator, 256) catch unreachable;
-    defer buf.deinit(std.testing.allocator);
-    try printProgramHuman(buf.writer(std.testing.allocator), prog);
-    try std.testing.expect(buf.items.len > 0);
-    try std.testing.expect(std.mem.indexOf(u8, buf.items, "Program:") != null);
+    var aw: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer aw.deinit();
+    try printProgramHuman(&aw.writer, prog);
+    try std.testing.expect(aw.written().len > 0);
+    try std.testing.expect(std.mem.indexOf(u8, aw.written(), "Program:") != null);
 }
 
 test "printProgramJsonWith produces valid JSON for empty program" {
     const prog = ast.Program{ .statements = &.{} };
-    var buf = std.ArrayList(u8).initCapacity(std.testing.allocator, 256) catch unreachable;
-    defer buf.deinit(std.testing.allocator);
-    try printProgramJsonWith(std.testing.allocator, buf.writer(std.testing.allocator), prog, .{});
-    try std.testing.expect(buf.items.len > 0);
-    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"statements\"") != null);
+    var aw: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer aw.deinit();
+    try printProgramJsonWith(std.testing.allocator, &aw.writer, prog, .{});
+    const out = aw.written();
+    try std.testing.expect(out.len > 0);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"statements\"") != null);
     // Verify it starts with { and ends with }
-    try std.testing.expectEqual(@as(u8, '{'), buf.items[0]);
-    try std.testing.expectEqual(@as(u8, '}'), buf.items[buf.items.len - 1]);
+    try std.testing.expectEqual(@as(u8, '{'), out[0]);
+    try std.testing.expectEqual(@as(u8, '}'), out[out.len - 1]);
 }
 
 test "printProgramHuman outputs Commit statement" {
     var stmts = [_]ast.Statement{.Commit};
     const prog = ast.Program{ .statements = &stmts };
-    var buf = std.ArrayList(u8).initCapacity(std.testing.allocator, 256) catch unreachable;
-    defer buf.deinit(std.testing.allocator);
-    try printProgramHuman(buf.writer(std.testing.allocator), prog);
-    try std.testing.expect(std.mem.indexOf(u8, buf.items, "Program:") != null);
-    try std.testing.expect(std.mem.indexOf(u8, buf.items, "Commit") != null);
-    try std.testing.expect(std.mem.indexOf(u8, buf.items, "[0]") != null);
+    var aw: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer aw.deinit();
+    try printProgramHuman(&aw.writer, prog);
+    try std.testing.expect(std.mem.indexOf(u8, aw.written(), "Program:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, aw.written(), "Commit") != null);
+    try std.testing.expect(std.mem.indexOf(u8, aw.written(), "[0]") != null);
 }
 
 test "printProgramHuman outputs Rollback statement" {
     var stmts = [_]ast.Statement{.Rollback};
     const prog = ast.Program{ .statements = &stmts };
-    var buf = std.ArrayList(u8).initCapacity(std.testing.allocator, 256) catch unreachable;
-    defer buf.deinit(std.testing.allocator);
-    try printProgramHuman(buf.writer(std.testing.allocator), prog);
-    try std.testing.expect(std.mem.indexOf(u8, buf.items, "Program:") != null);
-    try std.testing.expect(std.mem.indexOf(u8, buf.items, "Rollback") != null);
+    var aw: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer aw.deinit();
+    try printProgramHuman(&aw.writer, prog);
+    try std.testing.expect(std.mem.indexOf(u8, aw.written(), "Program:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, aw.written(), "Rollback") != null);
 }
 
 test "printProgramJsonWith outputs Commit and Rollback in JSON" {
     var stmts = [_]ast.Statement{ .Commit, .Rollback };
     const prog = ast.Program{ .statements = &stmts };
-    var buf = std.ArrayList(u8).initCapacity(std.testing.allocator, 256) catch unreachable;
-    defer buf.deinit(std.testing.allocator);
-    try printProgramJsonWith(std.testing.allocator, buf.writer(std.testing.allocator), prog, .{});
-    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"statements\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"Commit\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"Rollback\"") != null);
+    var aw: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer aw.deinit();
+    try printProgramJsonWith(std.testing.allocator, &aw.writer, prog, .{});
+    try std.testing.expect(std.mem.indexOf(u8, aw.written(), "\"statements\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, aw.written(), "\"Commit\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, aw.written(), "\"Rollback\"") != null);
 }
