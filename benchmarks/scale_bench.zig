@@ -19,6 +19,25 @@ const builtin = @import("builtin");
 
 const print = std.debug.print;
 
+// Zig 0.16 compat: Timer was removed; use monotonic clock directly.
+const Timer = struct {
+    start_ns: i96,
+
+    fn start() error{}!Timer {
+        return .{ .start_ns = nanoTimestamp() };
+    }
+
+    fn read(self: *Timer) u64 {
+        const diff = nanoTimestamp() - self.start_ns;
+        return if (diff > 0) @intCast(diff) else 0;
+    }
+
+    fn nanoTimestamp() i96 {
+        const io = std.Io.Threaded.global_single_threaded.io();
+        return std.Io.Clock.Timestamp.now(io, .real).raw.nanoseconds;
+    }
+};
+
 // ---------------------------------------------------------------------------
 // Query generators
 // ---------------------------------------------------------------------------
@@ -136,7 +155,7 @@ fn skipResult(tier: Tier, reason: []const u8) TierResult {
     };
 }
 
-fn checkTimeout(tier_start: *std.time.Timer, tier: Tier) ?TierResult {
+fn checkTimeout(tier_start: *Timer, tier: Tier) ?TierResult {
     const elapsed = tier_start.read();
     if (elapsed > TIER_TIMEOUT_NS) {
         return skipResult(tier, "timeout (>5min)");
@@ -149,7 +168,7 @@ fn checkTimeout(tier_start: *std.time.Timer, tier: Tier) ?TierResult {
 // ---------------------------------------------------------------------------
 
 fn benchLex(qs: [][]const u8) struct { ops_sec: f64 } {
-    var timer = std.time.Timer.start() catch return .{ .ops_sec = 0 };
+    var timer = Timer.start() catch return .{ .ops_sec = 0 };
     for (qs) |q| {
         var lx = gql.Lexer{ .src = q };
         while (true) {
@@ -170,7 +189,7 @@ fn benchParse(qs: [][]const u8) f64 {
         defer arena.deinit();
         var lx = gql.Lexer{ .src = q };
         var parser = gql.Parser{ .lx = &lx, .arena = &arena, .cur = lx.next() };
-        var timer = std.time.Timer.start() catch continue;
+        var timer = Timer.start() catch continue;
         _ = parser.parseProgram() catch {};
         total_ns += timer.read();
     }
@@ -181,11 +200,11 @@ fn benchParse(qs: [][]const u8) f64 {
 }
 
 fn benchPrintHuman(iterations: usize, program: gql.ast.Program) f64 {
-    var timer = std.time.Timer.start() catch return 0;
+    var timer = Timer.start() catch return 0;
     for (0..iterations) |_| {
         var buf: [4096]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&buf);
-        gql.print.printProgramHuman(fbs.writer(), program) catch {};
+        var w = std.Io.Writer.fixed(&buf);
+        gql.print.printProgramHuman(&w, program) catch {};
     }
     const elapsed = timer.read();
     const ns_f: f64 = @floatFromInt(elapsed);
@@ -194,11 +213,11 @@ fn benchPrintHuman(iterations: usize, program: gql.ast.Program) f64 {
 }
 
 fn benchPrintJson(allocator: std.mem.Allocator, iterations: usize, program: gql.ast.Program) f64 {
-    var timer = std.time.Timer.start() catch return 0;
+    var timer = Timer.start() catch return 0;
     for (0..iterations) |_| {
         var buf: [16384]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&buf);
-        gql.print.printProgramJsonWith(allocator, fbs.writer(), program, .{}) catch {};
+        var w = std.Io.Writer.fixed(&buf);
+        gql.print.printProgramJsonWith(allocator, &w, program, .{}) catch {};
     }
     const elapsed = timer.read();
     const ns_f: f64 = @floatFromInt(elapsed);
@@ -211,7 +230,7 @@ fn benchTemporal(iterations: usize) f64 {
     const times = [_][]const u8{ "14:30:00", "23:59:59", "00:00:00.123456" };
     const datetimes = [_][]const u8{ "2024-01-15T14:30:00Z", "2025-12-31T23:59:59" };
 
-    var timer = std.time.Timer.start() catch return 0;
+    var timer = Timer.start() catch return 0;
     const per_iter = dates.len + times.len + datetimes.len;
     for (0..iterations) |_| {
         for (dates) |d| _ = gql.temporal.parseDate(d) catch {};
@@ -230,7 +249,7 @@ fn benchKeyword(iterations: usize) f64 {
         "MERGE",       "ORDER",   "LIMIT",  "AND",    "OR",     "NOT",
         "notAKeyword", "alsoNot", "SELECT", "FROM",
     };
-    var timer = std.time.Timer.start() catch return 0;
+    var timer = Timer.start() catch return 0;
     for (0..iterations) |_| {
         for (keywords) |kw| _ = gql.token.keywordKind(kw);
     }
@@ -245,7 +264,7 @@ fn benchKeyword(iterations: usize) f64 {
 // ---------------------------------------------------------------------------
 
 fn runTier(allocator: std.mem.Allocator, tier: Tier) TierResult {
-    var tier_start = std.time.Timer.start() catch return skipResult(tier, "timer init failed");
+    var tier_start = Timer.start() catch return skipResult(tier, "timer init failed");
 
     // Generate queries for this tier
     const simple_qs = generateSimpleQueries(allocator, tier.simple_count) catch return skipResult(tier, "query gen failed");
@@ -323,12 +342,13 @@ fn runTier(allocator: std.mem.Allocator, tier: Tier) TierResult {
 // ---------------------------------------------------------------------------
 
 const StdoutWriter = struct {
-    file: std.fs.File,
+    file: std.Io.File,
     buf: [8192]u8 = undefined,
-    writer: ?std.fs.File.Writer = null,
+    writer: ?std.Io.File.Writer = null,
 
     fn open(self: *StdoutWriter) void {
-        self.writer = self.file.writer(&self.buf);
+        const io = std.Io.Threaded.global_single_threaded.io();
+        self.writer = self.file.writer(io, &self.buf);
     }
 
     fn writeAll(self: *StdoutWriter, data: []const u8) !void {
@@ -349,7 +369,7 @@ fn writeJsonOutput(out: *StdoutWriter, results: []const TierResult) !void {
     try out.writeAll("  \"version\": 1,\n");
 
     // Timestamp
-    const ts = std.time.timestamp();
+    const ts = @divTrunc(Timer.nanoTimestamp(), std.time.ns_per_s);
     const epoch_secs: u64 = @intCast(ts);
     const es = std.time.epoch.EpochSeconds{ .secs = epoch_secs };
     const day_secs = es.getDaySeconds();
@@ -447,15 +467,15 @@ fn writeSummary(results: []const TierResult) void {
 // Main
 // ---------------------------------------------------------------------------
 
-pub fn main() !void {
+pub fn main(init: std.process.Init.Minimal) !void {
     const allocator = std.heap.page_allocator;
 
     // Parse optional max-tier argument
-    var args = std.process.args();
-    _ = args.next(); // skip program name
+    const argv = try init.args.toSlice(allocator);
 
     var max_tier_count: usize = tiers.len;
-    if (args.next()) |arg| {
+    if (argv.len > 1) {
+        const arg = argv[1];
         for (tiers, 0..) |t, i| {
             if (std.mem.eql(u8, arg, t.name)) {
                 max_tier_count = i + 1;
@@ -486,7 +506,7 @@ pub fn main() !void {
 
     writeSummary(results[0..completed]);
 
-    var out = StdoutWriter{ .file = .{ .handle = std.posix.STDOUT_FILENO } };
+    var out = StdoutWriter{ .file = std.Io.File.stdout() };
     out.open();
     try writeJsonOutput(&out, results[0..completed]);
 }

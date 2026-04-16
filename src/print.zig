@@ -40,7 +40,7 @@ pub fn printProgramHumanWith(w: anytype, prog: ast.Program, opts: PrintOptions) 
 pub const PrintJsonOptions = struct { verbose_temporals: bool = false, session_offset_minutes: ?i16 = null };
 
 /// P2-3: Static GPA for convenience wrapper
-var print_gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
+var print_gpa: std.heap.DebugAllocator(.{}) = .init;
 var print_gpa_init = false;
 /// Mutex guarding the global GPA to ensure thread-safe access when
 /// printProgramJson is called concurrently from parallel pipelines.

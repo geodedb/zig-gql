@@ -12,6 +12,25 @@
 const std = @import("std");
 const gql = @import("gql");
 
+// Zig 0.16 compat: Timer was removed; use monotonic clock directly.
+const Timer = struct {
+    start_ns: i96,
+
+    fn start() error{}!Timer {
+        return .{ .start_ns = nanoTimestamp() };
+    }
+
+    fn read(self: *Timer) u64 {
+        const diff = nanoTimestamp() - self.start_ns;
+        return if (diff > 0) @intCast(diff) else 0;
+    }
+
+    fn nanoTimestamp() i96 {
+        const io = std.Io.Threaded.global_single_threaded.io();
+        return std.Io.Clock.Timestamp.now(io, .real).raw.nanoseconds;
+    }
+};
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -103,7 +122,7 @@ const queries = struct {
 
 fn benchLexSimple() BenchResult {
     const iterations: usize = 50_000;
-    var timer = std.time.Timer.start() catch return .{ .name = "lex simple", .count = 0, .total_ns = 0 };
+    var timer = Timer.start() catch return .{ .name = "lex simple", .count = 0, .total_ns = 0 };
 
     for (0..iterations) |_| {
         var lx = gql.Lexer{ .src = queries.simple };
@@ -118,7 +137,7 @@ fn benchLexSimple() BenchResult {
 
 fn benchLexComplex() BenchResult {
     const iterations: usize = 20_000;
-    var timer = std.time.Timer.start() catch return .{ .name = "lex complex", .count = 0, .total_ns = 0 };
+    var timer = Timer.start() catch return .{ .name = "lex complex", .count = 0, .total_ns = 0 };
 
     for (0..iterations) |_| {
         var lx = gql.Lexer{ .src = queries.complex };
@@ -133,7 +152,7 @@ fn benchLexComplex() BenchResult {
 
 fn benchLexCorpus() BenchResult {
     const iterations: usize = 10_000;
-    var timer = std.time.Timer.start() catch return .{ .name = "lex corpus (11 queries)", .count = 0, .total_ns = 0 };
+    var timer = Timer.start() catch return .{ .name = "lex corpus (11 queries)", .count = 0, .total_ns = 0 };
 
     for (0..iterations) |_| {
         for (queries.all) |q| {
@@ -150,7 +169,7 @@ fn benchLexCorpus() BenchResult {
 
 fn benchParseSimple() BenchResult {
     const iterations: usize = 50_000;
-    var timer = std.time.Timer.start() catch return .{ .name = "parse simple", .count = 0, .total_ns = 0 };
+    var timer = Timer.start() catch return .{ .name = "parse simple", .count = 0, .total_ns = 0 };
 
     for (0..iterations) |_| {
         var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -165,7 +184,7 @@ fn benchParseSimple() BenchResult {
 
 fn benchParseWhere() BenchResult {
     const iterations: usize = 30_000;
-    var timer = std.time.Timer.start() catch return .{ .name = "parse WHERE", .count = 0, .total_ns = 0 };
+    var timer = Timer.start() catch return .{ .name = "parse WHERE", .count = 0, .total_ns = 0 };
 
     for (0..iterations) |_| {
         var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -180,7 +199,7 @@ fn benchParseWhere() BenchResult {
 
 fn benchParseRelationship() BenchResult {
     const iterations: usize = 30_000;
-    var timer = std.time.Timer.start() catch return .{ .name = "parse relationship", .count = 0, .total_ns = 0 };
+    var timer = Timer.start() catch return .{ .name = "parse relationship", .count = 0, .total_ns = 0 };
 
     for (0..iterations) |_| {
         var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -195,7 +214,7 @@ fn benchParseRelationship() BenchResult {
 
 fn benchParseMultiHop() BenchResult {
     const iterations: usize = 20_000;
-    var timer = std.time.Timer.start() catch return .{ .name = "parse multi-hop", .count = 0, .total_ns = 0 };
+    var timer = Timer.start() catch return .{ .name = "parse multi-hop", .count = 0, .total_ns = 0 };
 
     for (0..iterations) |_| {
         var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -210,7 +229,7 @@ fn benchParseMultiHop() BenchResult {
 
 fn benchParseComplex() BenchResult {
     const iterations: usize = 10_000;
-    var timer = std.time.Timer.start() catch return .{ .name = "parse complex", .count = 0, .total_ns = 0 };
+    var timer = Timer.start() catch return .{ .name = "parse complex", .count = 0, .total_ns = 0 };
 
     for (0..iterations) |_| {
         var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -225,7 +244,7 @@ fn benchParseComplex() BenchResult {
 
 fn benchParseCorpus() BenchResult {
     const iterations: usize = 5_000;
-    var timer = std.time.Timer.start() catch return .{ .name = "parse corpus (11 queries)", .count = 0, .total_ns = 0 };
+    var timer = Timer.start() catch return .{ .name = "parse corpus (11 queries)", .count = 0, .total_ns = 0 };
 
     for (0..iterations) |_| {
         for (queries.all) |q| {
@@ -250,7 +269,7 @@ fn benchPrintHuman() BenchResult {
     var parser = gql.Parser{ .lx = &lx, .arena = &arena, .cur = lx.next() };
     const program = parser.parseProgram() catch return .{ .name = "print human", .count = 0, .total_ns = 0 };
 
-    var timer = std.time.Timer.start() catch return .{ .name = "print human", .count = 0, .total_ns = 0 };
+    var timer = Timer.start() catch return .{ .name = "print human", .count = 0, .total_ns = 0 };
 
     for (0..iterations) |_| {
         var buf: [4096]u8 = undefined;
@@ -272,7 +291,7 @@ fn benchPrintJson() BenchResult {
     var parser = gql.Parser{ .lx = &lx, .arena = &arena, .cur = lx.next() };
     const program = parser.parseProgram() catch return .{ .name = "print JSON", .count = 0, .total_ns = 0 };
 
-    var timer = std.time.Timer.start() catch return .{ .name = "print JSON", .count = 0, .total_ns = 0 };
+    var timer = Timer.start() catch return .{ .name = "print JSON", .count = 0, .total_ns = 0 };
 
     for (0..iterations) |_| {
         var buf: [16384]u8 = undefined;
@@ -295,7 +314,7 @@ fn benchTemporalParse() BenchResult {
         "2024-01-15T14:30:00Z", "2025-12-31T23:59:59", "2000-06-15T12:00:00.123",
     };
 
-    var timer = std.time.Timer.start() catch return .{ .name = "temporal parse", .count = 0, .total_ns = 0 };
+    var timer = Timer.start() catch return .{ .name = "temporal parse", .count = 0, .total_ns = 0 };
 
     var count: usize = 0;
     for (0..iterations) |_| {
@@ -326,7 +345,7 @@ fn benchKeywordLookup() BenchResult {
     };
 
     var sink: usize = 0;
-    var timer = std.time.Timer.start() catch return .{ .name = "keyword lookup", .count = 0, .total_ns = 0 };
+    var timer = Timer.start() catch return .{ .name = "keyword lookup", .count = 0, .total_ns = 0 };
 
     for (0..iterations) |_| {
         for (keywords) |kw| {
@@ -357,7 +376,7 @@ fn benchUnicodeClassify() BenchResult {
 
     // Accumulate results to prevent optimizer from eliminating the calls
     var sink: usize = 0;
-    var timer = std.time.Timer.start() catch return .{ .name = "unicode classify", .count = 0, .total_ns = 0 };
+    var timer = Timer.start() catch return .{ .name = "unicode classify", .count = 0, .total_ns = 0 };
 
     for (0..iterations) |_| {
         for (codepoints) |cp| {
