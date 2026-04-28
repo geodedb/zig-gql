@@ -105,6 +105,15 @@ pub const parallel = @import("parallel.zig");
 /// comptime-known no-op and the otel dependency is never resolved.
 pub const observability = @import("observability");
 
+/// OpenTelemetry bootstrap helper. Only available when `-Dwith_otel=true`;
+/// in the disabled build this resolves to an empty struct so consumers
+/// can still reference the namespace at compile time without pulling in
+/// any otel symbols.
+pub const observability_init = if (observability.enabled)
+    @import("observability_init")
+else
+    struct {};
+
 // ============================================================================
 // Convenience re-exports
 // ============================================================================

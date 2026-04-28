@@ -180,6 +180,27 @@ pub fn build(b: *std.Build) void {
         observability_mod.addImport("otel", otel_module);
         module.addImport("otel", otel_module);
 
+        // Bootstrap helper. Only registered when `-Dwith_otel=true` so
+        // the disabled build never compiles otel-touching code. Gated
+        // from src/root.zig via
+        // `if (observability.enabled) @import("observability_init")`.
+        const observability_init_mod = b.addModule("observability_init", .{
+            .root_source_file = b.path("src/observability_init.zig"),
+            .target = target,
+            .imports = &.{
+                .{ .name = "otel", .module = otel_module },
+                .{ .name = "observability", .module = observability_mod },
+            },
+        });
+        module.addImport("observability_init", observability_init_mod);
+        // Unit-test root and IDE check root both compile from
+        // `src/root.zig`, which transitively `@import`s
+        // `observability_init` under the `if (observability.enabled)`
+        // branch. Wire the same import here so those test/check graphs
+        // resolve under `-Dwith_otel=true`.
+        unit_test_mod.addImport("observability_init", observability_init_mod);
+        check_mod.addImport("observability_init", observability_init_mod);
+
         // Re-resolve otel for the smoke test so its `@import("otel")`
         // resolves; the disabled build skips this branch entirely.
         observability_enabled_tests.root_module.addImport("otel", otel_module);
