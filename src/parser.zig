@@ -10,6 +10,14 @@ const ast = @import("ast.zig");
 const temporal = @import("temporal.zig");
 const Lexer = @import("lexer.zig").Lexer;
 
+// Observability seam: parser wraps `parseProgram` with one
+// query-execution span per top-level call. Imports the named module
+// (resolves to a comptime no-op when -Dwith_otel=false). Telemetry is
+// non-fatal: every call into the seam is `catch {}`-discarded inside
+// the seam itself, so a failing exporter cannot propagate into parser
+// callers.
+const observability = @import("observability");
+
 pub const Parser = struct {
     lx: *Lexer,
     arena: *std.heap.ArenaAllocator,
@@ -372,7 +380,38 @@ pub const Parser = struct {
         return .{ .desc = desc, .nulls = nulls };
     }
 
+    /// Top-level parse entry. Emits one observability span shaped as a
+    /// GraphQL query execution (`db.system="graphql"`,
+    /// `graphql.operation.type="query"`). The seam is a comptime no-op
+    /// when -Dwith_otel=false, so this wrapper has zero overhead in the
+    /// default build. Implementation lives in `parseProgramImpl`; this
+    /// thin shim only owns the span lifecycle.
     pub fn parseProgram(self: *Parser) ParserError!ast.Program {
+        // We don't yet know the operation_type until at least one
+        // statement is parsed. Default to "query" — matches the
+        // umbrella term used by the rest of the rollout (mutations
+        // appear as Insert/Delete/Merge/Update statements at the GQL
+        // surface; subscriptions are not parsed here). The
+        // operation_name is null at this layer because the parser
+        // doesn't yet know the user-supplied label.
+        var span = observability.startQueryExecutionSpan("query", null);
+        // Belt-and-suspenders: even on an unhandled return path the
+        // span's underlying SDK arena is freed via `end(null)`.
+        defer span.end(null);
+        // Failure path: any ParserError shortcut bubbles up here.
+        errdefer observability.endQueryExecutionSpan(span, false, 0);
+
+        const program = try self.parseProgramImpl();
+
+        // Success path: status=ok, error_count=0. Recoverable
+        // diagnostics aren't tracked at this layer yet — when a
+        // diagnostics buffer is wired in, swap the literal 0 for its
+        // length.
+        observability.endQueryExecutionSpan(span, true, 0);
+        return program;
+    }
+
+    fn parseProgramImpl(self: *Parser) ParserError!ast.Program {
         // initialize alias set arraylist
         self.path_aliases = std.ArrayList([]const u8).empty;
         var list = std.ArrayList(ast.Statement).empty;
