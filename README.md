@@ -97,6 +97,72 @@ make dev
 make ci
 ```
 
+## Observability
+
+This library ships an optional OpenTelemetry seam, gated behind
+`-Dwith_otel=<bool>` (default `false`).
+
+When `-Dwith_otel=false` (the default) the seam collapses to a
+comptime-known no-op: every public helper in `gql.observability`
+returns a zero-sized `Span{}`, the otel dependency is never resolved,
+and the produced artifact contains zero otel symbols (verified by
+`otel/scripts/verify-consumer-noop.sh`).
+
+When `-Dwith_otel=true`, `gql.Parser.parseProgram` emits **one
+client-kind span per top-level parse call**. Each span is named
+`"gql.{operation_type}"` (e.g. `"gql.query"`) and carries the standard
+GraphQL semantic-convention attributes:
+
+- `db.system = "graphql"`
+- `graphql.operation.type` (e.g. `"query"`, `"mutation"`, `"subscription"`)
+- `graphql.operation.name` (when the caller supplies one)
+- `graphql.errors.count` (recoverable diagnostics observed during the parse)
+
+By default we do NOT set `db.statement` to the full query body — GQL
+queries can be long and may contain PII embedded in literals. Consumers
+that have explicitly sanitised their query text can opt in via
+`gql.observability.setQueryStatement(span, body)`, which truncates to
+1024 bytes (`gql.observability.max_statement_bytes`) to keep span
+attribute sizes bounded.
+
+Bootstrap from your application entry point:
+
+```zig
+const std = @import("std");
+const gql = @import("gql");
+
+pub fn main() !void {
+    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
+    defer _ = gpa.deinit();
+
+    var otel = try gql.observability_init.Otel.init(gpa.allocator(), "my-app");
+    otel.installGlobals();
+    defer otel.deinit();
+
+    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
+    defer arena.deinit();
+    var lx = gql.Lexer{ .src = "MATCH (n) RETURN n" };
+    var parser = gql.Parser{ .lx = &lx, .arena = &arena, .cur = lx.next() };
+    _ = try parser.parseProgram(); // emits a span
+}
+```
+
+Configuration follows the OpenTelemetry environment-variable contract
+(`OTEL_SERVICE_NAME`, `OTEL_TRACES_SAMPLER`, `OTEL_EXPORTER_OTLP_ENDPOINT`,
+etc). Defaults: `parentbased_traceidratio` @ 5%, OTLP/HTTP to
+`http://localhost:4318`.
+
+Verification gates (all three must pass):
+
+```bash
+zig build test                      # default flag = false
+zig build test -Dwith_otel=true     # flag on
+otel/scripts/verify-consumer-noop.sh --worktree <name> gql  # symbol-leak check
+```
+
+See [otel/docs/integration/RECIPE.md](https://gitlab.com/devnw/zig/otel/-/blob/main/docs/integration/RECIPE.md)
+for the full recipe.
+
 ## Documentation
 
 See the [docs](docs/) directory for detailed documentation.
