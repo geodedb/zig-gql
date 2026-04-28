@@ -99,6 +99,12 @@ pub const unicode = @import("unicode/unicode_tables.zig");
 /// Parallel processing helpers (optional thread-pool integration).
 pub const parallel = @import("parallel.zig");
 
+/// OpenTelemetry seam. Surfaces the no-op-when-disabled instrumentation
+/// helpers (`startQueryExecutionSpan`, `endQueryExecutionSpan`, etc.).
+/// When `-Dwith_otel=false` (the default) every helper compiles to a
+/// comptime-known no-op and the otel dependency is never resolved.
+pub const observability = @import("observability");
+
 // ============================================================================
 // Convenience re-exports
 // ============================================================================
