@@ -55,6 +55,7 @@ pub fn build(b: *std.Build) void {
     // `addOptions` modules end up sharing a transitive file path.
     const build_options = b.addOptions();
     build_options.addOption(bool, "enable_tp", enable_tp);
+    build_options.addOption([]const u8, "package_name", "gql");
     build_options.addOption(bool, "with_otel", with_otel);
     const build_options_mod = build_options.createModule();
 
