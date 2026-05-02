@@ -36,11 +36,17 @@
 //! bytes to keep span attribute sizes bounded.
 
 const std = @import("std");
-const build_options = @import("build_options");
+// 2026-05-02: hardcoded enabled=false and removed the build_options
+// import + the conditional otel import. The previous pattern surfaced
+// a Zig 0.16 module-dedup quirk when the lib was reached through
+// multiple paths in a downstream build graph (geode), producing
+// "build_options" vs "build_options0" diamonds at this file. The
+// seam is preserved as a permanent no-op for forward-compat;
+// restore the conditional once the upstream Zig dedup issue is
+// resolved.
+pub const enabled: bool = false;
 
-pub const enabled: bool = build_options.with_otel;
-
-const otel = if (enabled) @import("otel") else struct {};
+const otel = struct {};
 
 /// Maximum length we will ever store as `db.statement`. GQL queries
 /// can be arbitrarily long; we cap to keep per-span attribute bytes
