@@ -6868,3 +6868,54 @@ test "parser - moderately nested parenthesized statements within limit still par
     const program = try parser.parseProgram();
     try std.testing.expect(program.statements.len > 0);
 }
+
+// --- Coverage-guided fuzz target (GQL-APPSEC-05, GAP-TEST-002) ---
+// Drives Lexer + Parser.parseProgram over fuzzer-generated input. The whole
+// security posture of this library is input-handling robustness, so the
+// contract is simply: arbitrary bytes must never crash / hit UB. Any
+// ParserError (including error.OutOfMemory) is an acceptable outcome. The
+// backing allocator is bounded so adversarial input cannot OOM the fuzzer,
+// and the structural/expression recursion guards keep the stack bounded.
+// Run via `zig build test --fuzz` (the CI fuzz job).
+fn fuzzParseOne(_: void, smith: *std.testing.Smith) anyerror!void {
+    @disableInstrumentation();
+    var source_buf: [4096]u8 = undefined;
+    const len = smith.sliceWeightedBytes(source_buf[0..], &.{
+        .rangeAtMost(u8, 0x00, 0xff, 1), // any byte (robustness / invalid UTF-8)
+        .rangeAtMost(u8, 'a', 'z', 5), // identifiers
+        .rangeAtMost(u8, 'A', 'Z', 5), // keywords
+        .rangeAtMost(u8, '0', '9', 3), // numbers
+        .value(u8, ' ', 4),
+        .value(u8, '(', 3),
+        .value(u8, ')', 3),
+        .value(u8, '{', 2),
+        .value(u8, '}', 2),
+        .value(u8, '[', 2),
+        .value(u8, ']', 2),
+        .value(u8, '-', 2),
+        .value(u8, '>', 2),
+        .value(u8, ':', 2),
+        .value(u8, ',', 2),
+        .value(u8, '.', 2),
+        .value(u8, '\'', 2),
+        .value(u8, '"', 2),
+    });
+    const source = source_buf[0..len];
+
+    // Bound memory (heap-allocated so we do not add a large stack frame on top
+    // of parser recursion). The parser must return an error, not OOM-crash.
+    const backing = std.heap.page_allocator.alloc(u8, 2 * 1024 * 1024) catch return;
+    defer std.heap.page_allocator.free(backing);
+    var fba = std.heap.FixedBufferAllocator.init(backing);
+    var arena = std.heap.ArenaAllocator.init(fba.allocator());
+    defer arena.deinit();
+
+    var lx = Lexer{ .src = source };
+    var parser = Parser{ .lx = &lx, .arena = &arena, .cur = lx.next() };
+    // Only the absence of a crash / UB matters here; any error is fine.
+    _ = parser.parseProgram() catch {};
+}
+
+test "fuzz: parser never crashes on arbitrary input" {
+    try std.testing.fuzz({}, fuzzParseOne, .{});
+}
