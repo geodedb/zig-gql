@@ -2,6 +2,27 @@ const std = @import("std");
 const ast = @import("ast.zig");
 const temporal = @import("temporal.zig");
 
+/// Writes `s` as the body of a JSON string (no surrounding quotes), escaping
+/// `"`, `\`, and control characters per RFC 8259. A defensive default so AST
+/// string emission can never produce invalid or injectable JSON, even if a
+/// future change relaxes the upstream validation the temporal `.raw` path
+/// currently relies on (QUAL-016).
+fn writeJsonString(w: anytype, s: []const u8) !void {
+    for (s) |c| {
+        switch (c) {
+            '"' => try w.writeAll("\\\""),
+            '\\' => try w.writeAll("\\\\"),
+            0x08 => try w.writeAll("\\b"),
+            0x09 => try w.writeAll("\\t"),
+            0x0A => try w.writeAll("\\n"),
+            0x0C => try w.writeAll("\\f"),
+            0x0D => try w.writeAll("\\r"),
+            0x00...0x07, 0x0B, 0x0E...0x1F => try w.print("\\u{x:0>4}", .{c}),
+            else => try w.writeByte(c),
+        }
+    }
+}
+
 // Known limitations:
 // - Temporal normalization does not walk into InSubquery/NotInSubquery expressions
 // - printProgramHumanWith has an else => {} catch-all for unhandled statement types
@@ -97,13 +118,13 @@ pub fn printProgramJsonWith(allocator: std.mem.Allocator, w: anytype, prog: ast.
             }
             try w.writeAll("\",");
 
-            // Write raw
+            // Write raw (escaped defensively — see writeJsonString / QUAL-016)
             try w.writeAll("\"raw\":\"");
             switch (ent) {
-                .Date => |d| try w.writeAll(d.raw),
-                .Time => |t| try w.writeAll(t.raw),
-                .DateTime => |dt| try w.writeAll(dt.raw),
-                .LocalDateTime => |ldt| try w.writeAll(ldt.raw),
+                .Date => |d| try writeJsonString(w, d.raw),
+                .Time => |t| try writeJsonString(w, t.raw),
+                .DateTime => |dt| try writeJsonString(w, dt.raw),
+                .LocalDateTime => |ldt| try writeJsonString(w, ldt.raw),
             }
             try w.writeAll("\",");
 
@@ -834,4 +855,21 @@ test "printProgramJsonWith outputs Commit and Rollback in JSON" {
     try std.testing.expect(std.mem.indexOf(u8, aw.written(), "\"statements\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, aw.written(), "\"Commit\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, aw.written(), "\"Rollback\"") != null);
+}
+
+test "writeJsonString escapes quote, backslash, and control chars (QUAL-016)" {
+    var aw: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer aw.deinit();
+    try aw.writer.writeByte('"');
+    try writeJsonString(&aw.writer, "a\"b\\c\n\t\x01");
+    try aw.writer.writeByte('"');
+    const out = aw.written();
+    try std.testing.expect(std.mem.indexOf(u8, out, "\\\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\\\\") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\\u0001") != null);
+    // The escaped output must round-trip as a valid JSON string.
+    const parsed = try std.json.parseFromSlice([]const u8, std.testing.allocator, out, .{});
+    defer parsed.deinit();
+    try std.testing.expectEqualStrings("a\"b\\c\n\t\x01", parsed.value);
 }

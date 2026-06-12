@@ -54,6 +54,20 @@ pub const Parser = struct {
     // See GQL-APPSEC-01/02/03, QUAL-002/003.
     recur_depth: u16 = 0,
 
+    // Scientific-notation decimal literals are scaled to this many fractional
+    // digits: coeff = round(value × 10^scale), with `.scale` recorded on the
+    // Decimal. One constant drives both the scale factor and the recorded
+    // scale so they cannot desynchronize (QUAL-021). The overflow bound below
+    // keeps the resulting coefficient within i128 range with margin.
+    const DECIMAL_SCI_SCALE: u8 = 15;
+    const DECIMAL_SCI_FACTOR: f64 = blk: {
+        var f: f64 = 1;
+        var i: u8 = 0;
+        while (i < DECIMAL_SCI_SCALE) : (i += 1) f *= 10;
+        break :blk f;
+    };
+    const DECIMAL_SCI_MAX_COEFF: f64 = 1e37;
+
     const MAX_EXPR_DEPTH = 256;
     // Structural recursion limit. Kept well below MAX_EXPR_DEPTH because the
     // statement/query/pattern functions (parseQuery, parseStatement,
@@ -3787,13 +3801,14 @@ pub const Parser = struct {
                 if (has_exp) {
                     // Parse scientific notation: parse as f64 and convert to decimal
                     const value = try std.fmt.parseFloat(f64, lex);
-                    // Use 15 decimal places to preserve precision for small values (e.g. 1.23e-7)
-                    const scaled = value * 1_000_000_000_000_000;
-                    if (!std.math.isFinite(scaled) or @abs(scaled) >= 1e37) {
+                    // Scale to DECIMAL_SCI_SCALE fractional digits to preserve
+                    // precision for small values (e.g. 1.23e-7).
+                    const scaled = value * DECIMAL_SCI_FACTOR;
+                    if (!std.math.isFinite(scaled) or @abs(scaled) >= DECIMAL_SCI_MAX_COEFF) {
                         return error.UnexpectedToken;
                     }
                     const coeff = @as(i128, @intFromFloat(scaled));
-                    break :blk_f .{ .Decimal = .{ .coeff = coeff, .scale = 15 } };
+                    break :blk_f .{ .Decimal = .{ .coeff = coeff, .scale = DECIMAL_SCI_SCALE } };
                 } else {
                     // Standard decimal notation
                     var dot_idx: usize = 0;
