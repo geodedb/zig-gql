@@ -7,13 +7,18 @@
 
 const std = @import("std");
 const gql = @import("gql");
+const build_options = @import("build_options");
 
 // ============================================================================
 // Integration Tests
 // ============================================================================
 
-test "integration: version is defined" {
-    try std.testing.expectEqualStrings("0.1.0", gql.version);
+test "integration: version is defined and matches the package manifest" {
+    // gql.version is sourced from build.zig.zon via build_options, so assert
+    // the wiring rather than a frozen literal (which previously drifted from
+    // the manifest). Verifies it is non-empty and consistent end to end.
+    try std.testing.expect(gql.version.len > 0);
+    try std.testing.expectEqualStrings(build_options.version, gql.version);
 }
 
 test "integration: lex a simple query" {

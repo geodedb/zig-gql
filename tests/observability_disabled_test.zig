@@ -28,9 +28,17 @@ test "build_options.with_otel exists and defaults to false" {
     try std.testing.expectEqual(false, build_options.with_otel);
 }
 
-test "observability.enabled tracks build_options.with_otel" {
-    const build_options = @import("build_options");
-    try std.testing.expectEqual(build_options.with_otel, gql.observability.enabled);
+test "observability seam is currently force-disabled (no-op)" {
+    // The seam is intentionally compiled as a permanent no-op:
+    // `observability.zig` hardcodes `enabled = false` to avoid a Zig 0.16
+    // module-dedup diamond (build_options vs build_options0) in downstream
+    // build graphs. Until the conditional is restored, `enabled` does NOT
+    // track build_options.with_otel — it is always false regardless of the
+    // flag. This test pins that contract so the divergence stays explicit and
+    // intentional rather than becoming silent drift. When the upstream dedup
+    // issue is fixed and `enabled` is wired back to `build_options.with_otel`,
+    // restore the original `expectEqual(build_options.with_otel, ...)` here.
+    try std.testing.expectEqual(false, gql.observability.enabled);
 }
 
 test "client/server seams are no-ops when otel disabled" {

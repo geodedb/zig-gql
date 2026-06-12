@@ -3,6 +3,18 @@
 
 const std = @import("std");
 
+/// Single source of truth for the library version: parsed at comptime from
+/// `build.zig.zon` so `gql.version` can never drift from the package manifest.
+fn parseZonVersion(comptime zon_src: []const u8) []const u8 {
+    const marker = ".version = \"";
+    const start = (std.mem.indexOf(u8, zon_src, marker) orelse
+        @compileError("build.zig.zon: missing .version field")) + marker.len;
+    const end = std.mem.indexOfScalarPos(u8, zon_src, start, '"') orelse
+        @compileError("build.zig.zon: unterminated .version string");
+    return zon_src[start..end];
+}
+const lib_version = parseZonVersion(@embedFile("build.zig.zon"));
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -56,6 +68,7 @@ pub fn build(b: *std.Build) void {
     const build_options = b.addOptions();
     build_options.addOption(bool, "enable_tp", enable_tp);
     build_options.addOption([]const u8, "package_name", "gql");
+    build_options.addOption([]const u8, "version", lib_version);
     build_options.addOption(bool, "with_otel", with_otel);
     const build_options_mod = build_options.createModule();
 

@@ -38,8 +38,11 @@
 //! var arena = std.heap.ArenaAllocator.init(fba.allocator());
 //! ```
 //!
-//! The parser also has a recursion depth limit (256 levels) to prevent
-//! stack overflow on deeply nested expressions.
+//! The parser bounds recursion to prevent stack overflow on adversarial
+//! nested input: expression nesting is capped at 256 levels, and structural
+//! nesting (subqueries, parenthesized statements, graph patterns) is capped
+//! at 100 levels. Input past either limit yields a parser error rather than
+//! a crash.
 //!
 //! ## Thread Safety
 //!
@@ -103,6 +106,11 @@ pub const parallel = @import("parallel.zig");
 /// helpers (`startQueryExecutionSpan`, `endQueryExecutionSpan`, etc.).
 /// When `-Dwith_otel=false` (the default) every helper compiles to a
 /// comptime-known no-op and the otel dependency is never resolved.
+///
+/// NOTE: the seam is currently force-disabled (`observability.enabled` is
+/// hardcoded `false`) regardless of `-Dwith_otel`, to avoid a Zig 0.16
+/// module-dedup diamond in downstream build graphs. Until that is resolved,
+/// `-Dwith_otel=true` emits no telemetry. See `src/observability.zig`.
 pub const observability = @import("observability");
 
 /// OpenTelemetry bootstrap helper. Only available when `-Dwith_otel=true`;
@@ -142,8 +150,9 @@ pub const TokenKind = token.TokenKind;
 /// GQL status/diagnostic type.
 pub const GqlStatus = status.GqlStatus;
 
-/// Library version
-pub const version = "0.1.0";
+/// Library version. Sourced from `build.zig.zon` via `build_options` so it
+/// can never drift from the package manifest (see build.zig `parseZonVersion`).
+pub const version = @import("build_options").version;
 
 // ============================================================================
 // Compile-time verification

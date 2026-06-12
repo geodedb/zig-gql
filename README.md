@@ -102,6 +102,17 @@ make ci
 This library ships an optional OpenTelemetry seam, gated behind
 `-Dwith_otel=<bool>` (default `false`).
 
+> **Current status (temporary):** the seam is compiled as a permanent
+> no-op regardless of `-Dwith_otel`. `gql.observability.enabled` is
+> hardcoded `false` to avoid a Zig 0.16 module-dedup diamond
+> (`build_options` vs `build_options0`) that surfaced when this library is
+> reached through multiple paths in a downstream build graph. Until the
+> upstream dedup behavior is resolved, building with `-Dwith_otel=true`
+> compiles the enabled-mode test scaffolding but **emits no telemetry** —
+> every helper still returns a zero-sized `Span{}`. The span shape and
+> bootstrap API documented below describe the intended behavior once the
+> conditional is restored. Track this in `src/observability.zig`.
+
 When `-Dwith_otel=false` (the default) the seam collapses to a
 comptime-known no-op: every public helper in `gql.observability`
 returns a zero-sized `Span{}`, the otel dependency is never resolved,
