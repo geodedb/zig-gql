@@ -299,11 +299,16 @@ pub const Lexer = struct {
             const save_line = self.line;
             const save_col = self.col;
             self.skipSeparators();
-            if (self.idx < self.src.len and t.isIdentifierStart(self.src[self.idx])) {
+            // This fast path only ever needs to match the ASCII keyword
+            // "DATETIME". The identifier predicates take a u21 codepoint, so
+            // gate on ASCII (< 128) before passing a raw byte — otherwise a
+            // multi-byte UTF-8 lead byte would be misread as a Latin-1 letter
+            // and advanced one byte mid-codepoint (GQL-APPSEC-07).
+            if (self.idx < self.src.len and self.src[self.idx] < 128 and t.isIdentifierStart(self.src[self.idx])) {
                 const ident_start = self.idx;
                 self.idx += 1;
                 self.col += 1;
-                while (self.idx < self.src.len and t.isIdentifierContinue(self.src[self.idx])) : (self.col += 1) self.idx += 1;
+                while (self.idx < self.src.len and self.src[self.idx] < 128 and t.isIdentifierContinue(self.src[self.idx])) : (self.col += 1) self.idx += 1;
                 const w = self.src[ident_start..self.idx];
                 if (std.ascii.eqlIgnoreCase(w, "DATETIME")) {
                     self.skipSeparators();
@@ -681,4 +686,22 @@ test "lexer - terminated multi-line comment works normally" {
     try std.testing.expectEqual(t.TokenKind.RETURN, tok1.kind);
     const tok2 = lx.next();
     try std.testing.expectEqual(t.TokenKind.eof, tok2.kind);
+}
+
+test "lexer - LOCAL DATETIME typed literal still tokenizes" {
+    var lx = Lexer{ .src = "LOCAL DATETIME\"2020-01-01T00:00:00\"" };
+    const tok1 = lx.next();
+    try std.testing.expectEqual(t.TokenKind.local_datetime_lit, tok1.kind);
+}
+
+test "lexer - non-ASCII identifier after LOCAL falls back to LOCAL keyword" {
+    // Regression for GQL-APPSEC-07: a multi-byte UTF-8 lead byte after LOCAL
+    // must not be misread by the ASCII DATETIME fast path. LOCAL should fall
+    // back to a plain keyword token and the lexer must not crash or desync.
+    var lx = Lexer{ .src = "LOCAL café" };
+    const tok1 = lx.next();
+    try std.testing.expectEqual(t.TokenKind.LOCAL, tok1.kind);
+    // The next token starts exactly at the 'c' of café (no mid-codepoint skew).
+    const tok2 = lx.next();
+    try std.testing.expectEqualStrings("café", tok2.lexeme);
 }

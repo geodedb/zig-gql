@@ -13,7 +13,7 @@ A Zig library for gql
 - **Pretty Printers**: Human-readable and JSON output for AST programs
 - **Status Codes**: ISO/IEC 39075 diagnostic status codes and helpers
 - **Language Metadata**: Keyword tables, built-in functions, types, and procedures
-- **Minimal Dependencies**: Pure Zig standard library by default; optional [thread-pool](https://gitlab.com/devnw/zig/thread-pool) integration for parallelism (`-Dthread-pool=true`)
+- **Minimal Dependencies**: Pure Zig standard library by default; optional [thread-pool](https://gitlab.com/devnw/zig/thread-pool) integration for parallelism (`-Dthread_pool=true`)
 - **Memory Safe**: Arena-based allocation with no leaks
 - **Cross-Platform**: Linux, macOS, Windows support
 
@@ -63,8 +63,8 @@ pub fn main() !void {
 The library includes optional parallel processing support via the [thread-pool](https://gitlab.com/devnw/zig/thread-pool) library. Enable it at build time:
 
 ```bash
-zig build -Dthread-pool=true
-zig build test -Dthread-pool=true
+zig build -Dthread_pool=true
+zig build test -Dthread_pool=true
 ```
 
 When thread-pool is enabled, the `parallel` module provides fork/join APIs for processing parsed AST statements across multiple cores:
