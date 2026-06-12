@@ -1,8 +1,8 @@
 # GAP Analysis
 
-Last updated: 2026-03-30
+Last updated: 2026-06-12
 
-Repository status: GQL front-end extracted from Geode. Full audit completed and gap closure pass applied.
+Repository status: GQL front-end extracted from Geode. Full audit completed and gap closure pass applied. A 2026-06-12 re-audit (Zig 0.16.0) traced REQUIREMENTS.md to code and surfaced **10 new open gaps** — see [Re-Audit 2026-06-12](#re-audit-2026-06-12-new-open-gaps) at the end of this document. Two previously-closed items have **regressed** (GAP-DOC-002, GAP-PAR-002/003/004).
 
 ## Goal
 
@@ -258,3 +258,97 @@ All Won't Do items have explicit justification and are tracked for future initia
 - Proper double-quote/quoted identifier handling
 - Parallel lexing (Won't Do — complexity outweighs benefit for typical query sizes)
 - Parallel test infrastructure (Won't Do — handled via standard test coverage)
+
+## Re-Audit 2026-06-12 (New Open Gaps)
+
+**Auditor:** Automated requirements-to-code gap analysis
+**Toolchain:** Zig 0.16.0
+**Baseline:** `zig build` → OK. `zig build test` → **133/135 pass, 2 skipped** (default flags).
+**Scope:** Re-traced every requirement in `docs/REQUIREMENTS.md` to code; verified build/test under feature flags.
+
+This pass found that the default build is green, but **feature-flagged builds are broken** and two previously "Closed" items have regressed. Gap-IDs continue the existing per-domain numbering. A new `GAP-OTEL-*` domain is introduced for the (post-extraction) OpenTelemetry seam.
+
+### Requirement coverage (this pass)
+
+| Status | Count | Requirements |
+|---|---|---|
+| Implemented | 9 | GQL-REQ-001..008, GQL-PKG-001/002/003 (core API surface all present and exposed via `src/root.zig`) |
+| Partial | 3 | GQL-REQ-005 (JSON printer emits no AST body — GAP-QUAL-013); Documentation reqs (example broken — GAP-DOC-013, flags wrong — GAP-DOC-011) |
+| Not Implemented | 2 | GQL-TEST-002 conformance (GAP-TEST-001); GQL-TEST-003 fuzzing (GAP-TEST-002) |
+| Unknown | 0 | — |
+
+Note: `docs/REQUIREMENTS.md` cites `src/gql/*.zig` and `build.zig:759/767/772/1086` line numbers that **do not exist** in this repo (Geode-relative paths; `build.zig` is only 301 lines with no conformance/fuzz steps). The requirement doc itself is stale and should be re-pathed to `src/*.zig`.
+
+### New Build / Feature-Flag Gaps
+
+| Gap-ID | Severity | Gap | Status |
+|---|---|---|---|
+| GAP-PAR-011 | HIGH | `src/parallel.zig` does not compile under `-Dthread_pool=true` with the pinned `thread_pool-0.2.4`. `zig build check -Dthread_pool=true` and `zig build test -Dthread_pool=true` both fail with: (1) `src/parallel.zig:59:27 error: root source file struct 'Thread' has no member named 'Mutex'` (diamond: `std.Thread` resolves against thread_pool's module tree), and (2) `src/parallel.zig:299:71 error: value of type 'pool.Core.SubmitBatchResult' ignored` (`pool.submitBatch(...)` now returns a value the code discards). **The entire parallel subsystem marked Closed in GAP-PAR-002/003/004/006 is broken when its own feature flag is enabled.** Default build passes only because `enable_tp=false` gates the code out. | **Open** |
+| GAP-OTEL-001 | HIGH | `zig build test -Dwith_otel=true` **fails**: `tests/observability_disabled_test.zig` test `observability.enabled tracks build_options.with_otel` returns `error.TestExpectedEqual`. `src/observability.zig:47` hardcodes `pub const enabled: bool = false` (changed 2026-05-02 to dodge a Zig 0.16 module-dedup diamond), but the seam test still asserts `enabled == build_options.with_otel`. Test and implementation contradict; any consumer enabling otel breaks the test suite. | **Open** |
+| GAP-OTEL-002 | MEDIUM | OpenTelemetry seam is permanently dead. `src/observability.zig:47` forces `enabled=false`, so every helper (`startQueryExecutionSpan`, `endQueryExecutionSpan`, etc.) is a comptime no-op **regardless of `-Dwith_otel`**. `build.zig:201-243` and `build.zig.zon` still wire/fetch the `otel` lazy dependency under `-Dwith_otel=true`, producing a build option that fetches a dependency but emits zero telemetry. Misleading capability: `-Dwith_otel=true` advertises observability that cannot activate. | **Open** |
+
+### New Quality Gaps
+
+| Gap-ID | Severity | Gap | Status |
+|---|---|---|---|
+| GAP-QUAL-013 | MEDIUM | `printProgramJsonWith` (`src/print.zig:74-77`) emits only `{"kind":"<TypeName>"}` per statement — it serializes the statement **tag name and nothing else**. No MATCH patterns, WHERE clauses, RETURN items, or expressions are written (only an optional `temporals` array when `verbose_temporals=true`). GQL-REQ-005 requires a "JSON printer"; the current output cannot reconstruct or represent the parsed program. This is broader than the documented GAP-DOC-010 (subquery walking) — the JSON body is entirely absent for all 32 statement variants. | **Open** |
+
+### New Documentation Gaps
+
+| Gap-ID | Severity | Gap | Status |
+|---|---|---|---|
+| GAP-DOC-011 | MEDIUM | README documents the parallel build flag as `-Dthread-pool=true` (hyphen) at README.md:16 and :66-67, but the actual `build.zig:10` option is `thread_pool` (underscore). `zig build -Dthread-pool=true` errors with `invalid option: -Dthread-pool`. Every documented parallel-build command fails as written. | **Open** |
+| GAP-DOC-012 | LOW | Version mismatch: `src/root.zig:146` exports `pub const version = "0.1.0"` while `build.zig.zon` declares `version = "0.1.4"`; README install snippet (README.md:29) references the `v0.1.0` archive URL. Three sources of truth disagree on the library version. | **Open** |
+| GAP-DOC-013 | MEDIUM | `examples/basic.zig` regressed (reopens GAP-DOC-002, previously "Closed — rewrote with GQL parsing usage example"). It is now a placeholder that only prints a string with the real usage commented out, and it **does not compile under Zig 0.16**: `examples/basic.zig:9` uses `std.io.getStdOut()` which was removed (`error: struct 'std' has no member named 'io'`). The example is not wired into `build.zig` and not in `build.zig.zon` `paths`, so nothing compiles or ships it — the regression went undetected. | **Open** |
+
+### New Test Gaps
+
+| Gap-ID | Severity | Gap | Status |
+|---|---|---|---|
+| GAP-TEST-001 | MEDIUM | GQL-TEST-002 (preserve generated conformance coverage) is **Not Implemented**. There is no `conformance` build step and no conformance test files in-repo (`grep -rniE 'conformance' build.zig` → none; the only matches live under vendored `zig-pkg/`). REQUIREMENTS.md cites `build.zig:759/767/772` which do not exist (build.zig is 301 lines). Confirms the open item the 2026-03-22 AUDIT_REPORT already noted; never tracked with a Gap-ID. | **Open** |
+| GAP-TEST-002 | MEDIUM | GQL-TEST-003 (preserve parser fuzzing) is **Not Implemented**. No `fuzz` build step exists; REQUIREMENTS.md cites `build.zig:1086` which does not exist. Zig 0.16 ships `--fuzz` but no fuzz unit tests are defined in the gql sources. Confirms an AUDIT_REPORT open item; never tracked with a Gap-ID. | **Open** |
+| GAP-TEST-003 | LOW | `src/observability.zig` (208 lines) and `src/observability_init.zig` (107 lines) have **zero in-module unit tests**. Coverage exists only via external `tests/observability_{disabled,enabled}_test.zig`, and the disabled-mode test fails under `-Dwith_otel=true` (GAP-OTEL-001). These post-extraction modules were never added to the module/test table above. | **Open** |
+
+### Status Changes To Existing Gaps
+
+| Gap-ID | Prior Status | New Status | Evidence |
+|---|---|---|---|
+| GAP-DOC-002 | Closed | **Reopened (regressed)** | `examples/basic.zig` is again a placeholder and does not compile under Zig 0.16 — tracked as GAP-DOC-013. |
+| GAP-PAR-002 | Closed | **Regressed** | `src/parallel.zig` compiles only with `-Dthread_pool=false`; fails to compile when the feature it implements is enabled — tracked as GAP-PAR-011. |
+| GAP-PAR-003 | Closed | **Regressed** | Same root cause as GAP-PAR-011 (`parallelProcessStatements` lives in the non-compiling module). |
+| GAP-PAR-004 | Closed | **Regressed** | Same root cause as GAP-PAR-011 (`parallelValidateStatements` calls the changed `submitBatch` API at `src/parallel.zig:299`). |
+| GAP-PAR-006 | Closed | **Regressed** | The print.zig mutex fix stands, but the surrounding parallel module no longer compiles under `-Dthread_pool=true` (GAP-PAR-011). |
+| GQL-TEST-002 (AUDIT open item) | Open (untracked) | **Tracked** | Now GAP-TEST-001. |
+| GQL-TEST-003 (AUDIT open item) | Open (untracked) | **Tracked** | Now GAP-TEST-002. |
+
+All other previously-Closed and Won't-Do items remain accurate against the current tree (core API symbols for GQL-REQ-001..008 and GQL-PKG-001..003 all verified present and exported via `src/root.zig`; recursion depth guard, SQLSTATE codes, dead-function removal, decimal/float clamps, unterminated-comment detection all still in place).
+
+### Re-Audit Priority Matrix
+
+| Severity | Count | Gap-IDs |
+|---|---|---|
+| HIGH | 2 | GAP-PAR-011, GAP-OTEL-001 |
+| MEDIUM | 6 | GAP-OTEL-002, GAP-QUAL-013, GAP-DOC-011, GAP-DOC-013, GAP-TEST-001, GAP-TEST-002 |
+| LOW | 2 | GAP-DOC-012, GAP-TEST-003 |
+| **Total new open** | **10** | — |
+
+---
+
+## Remediation Status — Re-Audit 2026-06-12 (closure pass)
+
+| Gap-ID | Status | Commit / Note |
+|--------|--------|---------------|
+| GAP-PAR-011 (`-Dthread_pool=true` fails to compile) | **Closed** | fb02779 — std.Thread.Mutex→tp.sync.Mutex migration + submitBatch partial-submit handling; parallel-path tests added |
+| GAP-OTEL-001 (`-Dwith_otel=true` test fails) | **Closed** | 39bfa70 — test pins the intentional force-disabled contract |
+| GAP-OTEL-002 (otel seam dead while documented as working) | **Closed (honest docs)** | 39bfa70 — README/root.zig state the seam is currently a no-op pending the upstream Zig dedup fix |
+| GAP-QUAL-013 (JSON printer emits no AST body) | **Documented limitation** | The JSON printer emits statement kinds + verbose temporals by design; full AST→JSON serialization (GQL-REQ-005 complete) is a feature enhancement, not a defect. Tracked for future work |
+| GAP-DOC-011 (README `-Dthread-pool` hyphen) | **Closed** | eb355b7 |
+| GAP-DOC-012 (version mismatch) | **Closed** | 39bfa70 — single-sourced |
+| GAP-DOC-013 (examples/basic.zig broken) | **Closed** | 922a78a — rewritten as a real, compile-checked example wired into `zig build example` + `check` |
+| GAP-DOC-002 (example regressed) | **Closed** | 922a78a |
+| GAP-TEST-002 (parser fuzzing not implemented) | **Closed** | e8df65c — coverage-guided fuzz target |
+| GAP-TEST-003 (observability has no in-module tests) | **Closed** | 6081156 — in-module seam tests + build target |
+| GAP-TEST-001 (conformance harness not implemented) | **Deferred** | Large feature (GQL conformance suite); out of scope for this remediation pass |
+
+Regressed-then-fixed: the parallel module (GAP-PAR-002/003/004/006) compiles
+again under `-Dthread_pool=true` (root cause GAP-PAR-011 closed).
