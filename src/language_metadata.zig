@@ -83,8 +83,10 @@ pub const KeywordInfo = struct {
     extended_doc: ?[]const u8 = null,
 };
 
-/// All GQL keywords with metadata
-/// Sorted alphabetically for binary search in lexer
+/// All GQL keywords with metadata.
+/// Kept alphabetically sorted (enforced by the "keywords are sorted" test) for
+/// stable diffs and predictable ordering. Lookups go through `findKeyword`
+/// (a linear scan); the lexer itself matches via token.zig's StaticStringMap.
 pub const keywords = [_]KeywordInfo{
     // A
     .{ .name = "ACYCLIC", .category = .path_pattern, .compliance = .iso_gql, .doc = "Restricts path patterns to acyclic paths (no repeated nodes)" },
@@ -1944,4 +1946,22 @@ test "core GQL functions present" {
     try std.testing.expect(findFunction("id") != null);
     try std.testing.expect(findFunction("labels") != null);
     try std.testing.expect(findFunction("type") != null);
+}
+
+test "metadata name accessors return every entry (QUAL-013)" {
+    // Public helpers for LSP/completion consumers: assert they enumerate the
+    // full underlying tables so the accessors stay wired to the data.
+    const kw = getKeywordNames();
+    try std.testing.expectEqual(keywords.len, kw.len);
+    try std.testing.expect(kw.len > 0);
+    try std.testing.expect(kw[0].len > 0);
+
+    const fns = getFunctionNames();
+    try std.testing.expectEqual(functions.len, fns.len);
+
+    const tys = getTypeNames();
+    try std.testing.expectEqual(types.len, tys.len);
+
+    const procs = getProcedureNames();
+    try std.testing.expectEqual(procedures.len, procs.len);
 }

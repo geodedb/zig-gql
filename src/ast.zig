@@ -322,7 +322,7 @@ pub const Expr = union(enum) {
     PatternCount: struct { pattern: *GraphPattern, where: ?*Expr = null },
     // Map projection: n {.name, .age} - projects specified properties from an object
     MapProjection: struct { source: *Expr, fields: [][]const u8 },
-    // CANARY: REQ=REQ-GQL-089; FEATURE="ListComprehension"; ASPECT=AST; STATUS=TESTED; TEST=geodetestlab/specs/gql_expressions_comprehensive.ymlEMENTED; OWNER=parser; UPDATED=2025-12-23
+    // CANARY: REQ=REQ-GQL-089; FEATURE="ListComprehension"; ASPECT=AST; STATUS=TESTED; TEST=geodetestlab/specs/gql_expressions_comprehensive.yml; OWNER=parser; UPDATED=2025-12-23
     // List comprehension with optional filter and map: [x IN list WHERE cond | x.name]
     // or all(x IN list WHERE condition)
     ListComprehension: struct {

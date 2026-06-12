@@ -2522,20 +2522,29 @@ pub const Parser = struct {
         var limit_param: ?[]const u8 = null;
         var offset_param: ?[]const u8 = null;
 
-        // Additional legality enforcement: when ident_order_only policy active, reject any ORDER BY key that is not a bare identifier.
+        // Additional ORDER BY legality enforcement, per the optional policy flags.
         if (ord) |ob| {
-            if (self.ident_order_only) {
-                var i_chk: usize = 0;
-                while (i_chk < ob.keys.len) : (i_chk += 1) {
-                    const ke = ob.keys[i_chk].expr;
-                    if (ke != .Ident) {
-                        if (self.containsCall(ke)) {
-                            self.last_error = "function calls in ORDER BY are disabled";
-                        } else {
-                            self.last_error = "ORDER BY key must be identifier";
-                        }
-                        return error.UnexpectedToken;
+            var i_chk: usize = 0;
+            while (i_chk < ob.keys.len) : (i_chk += 1) {
+                const ke = ob.keys[i_chk].expr;
+                // ident_order_only: keys must be bare identifiers.
+                if (self.ident_order_only and ke != .Ident) {
+                    if (self.containsCall(ke)) {
+                        self.last_error = "function calls in ORDER BY are disabled";
+                    } else {
+                        self.last_error = "ORDER BY key must be identifier";
                     }
+                    return error.UnexpectedToken;
+                }
+                // strict_order_keys: keys must be identifiers or member chains.
+                if (self.strict_order_keys and !self.isSimpleOrderKey(ke)) {
+                    self.last_error = "ORDER BY key must be an identifier or member chain";
+                    return error.UnexpectedToken;
+                }
+                // forbid_orderby_paths: path-pattern aliases may not be used as keys.
+                if (self.forbid_orderby_paths and self.isPathAlias(ke)) {
+                    self.last_error = "path aliases are not allowed in ORDER BY";
+                    return error.UnexpectedToken;
                 }
             }
         }
@@ -2606,24 +2615,9 @@ pub const Parser = struct {
     fn isPathAlias(self: *Parser, e: ast.Expr) bool {
         // True only if expr is an identifier that matches a collected chain alias.
         if (e != .Ident) return false;
-        const name = e.Ident;
+        const name = e.Ident.orig;
         for (self.path_aliases.items) |ali| {
             if (std.mem.eql(u8, ali, name)) return true;
-        }
-        return false;
-    }
-
-    fn isProjectedIdent(self: *Parser, name: []const u8, items: []ast.ReturnItem) bool {
-        _ = self; // unused
-        // An ORDER BY identifier is legal if it's one of the RETURN aliases or simple identifiers
-        var i: usize = 0;
-        while (i < items.len) : (i += 1) {
-            const it = items[i];
-            if (it.alias) |al| {
-                if (std.mem.eql(u8, al, name)) return true;
-            } else if (it.expr == .Ident) {
-                if (std.mem.eql(u8, it.expr.Ident, name)) return true;
-            }
         }
         return false;
     }
@@ -4069,24 +4063,11 @@ pub const Parser = struct {
         };
     }
 
+    /// Instance convenience wrapper over `containsCallStatic` (QUAL-017): a
+    /// single implementation backs both the `self`-method and static forms.
     pub fn containsCall(self: *Parser, e: ast.Expr) bool {
-        return switch (e) {
-            .Call => true,
-            .Member => |m| self.containsCall(m.target.*),
-            .Unary => |u| self.containsCall(u.expr.*),
-            .Binary => |b| self.containsCall(b.left.*) or self.containsCall(b.right.*),
-            .List => |items| blk: {
-                for (items) |it| if (self.containsCall(it.*)) break :blk true;
-                break :blk false;
-            },
-            .In => |x| blk2: {
-                if (self.containsCall(x.value.*)) break :blk2 true;
-                for (x.set) |it| if (self.containsCall(it.*)) break :blk2 true;
-                break :blk2 false;
-            },
-            .IsNull => |z| self.containsCall(z.target.*),
-            else => false,
-        };
+        _ = self;
+        return containsCallStatic(e);
     }
 
     // Static variant for post-parse validation (no Parser instance state needed)
@@ -5903,10 +5884,6 @@ pub const Parser = struct {
     }
 
     // Parse CREATE GRAPH statement (wrapper for compatibility)
-    fn parseCreateGraph(self: *Parser) ParserError!ast.Statement {
-        return self.parseCreateGraphWithReplace(false);
-    }
-
     // Parse CREATE GRAPH TYPE statement
     // Field-Level Encryption Parser Extensions
     // CANARY: REQ=REQ-FLE-PARSER-001; FEATURE="FieldLevelEncryption"; ASPECT=PARSER; STATUS=TESTED; TEST=tests/test_tde_kms_integration.zig; OWNER=security; UPDATED=2026-01-15
@@ -6830,6 +6807,33 @@ test "builtin: unknown function is allowed (any arity)" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const st = try parseOneForTest("RETURN myCustomFn(1, 2, 3)", &arena);
+    try std.testing.expect(st == .Query);
+}
+
+// --- ORDER BY restriction policy flags (QUAL-018: now wired with effect) ---
+
+test "order by: strict_order_keys allows identifier and member chains" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var lx = Lexer{ .src = "MATCH (n) RETURN n ORDER BY n.name" };
+    var parser = Parser{ .lx = &lx, .arena = &arena, .cur = lx.next(), .strict_order_keys = true };
+    const program = try parser.parseProgram();
+    try std.testing.expect(program.statements.len > 0);
+}
+
+test "order by: strict_order_keys rejects a non-simple key" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var lx = Lexer{ .src = "MATCH (n) RETURN n ORDER BY n.age + 1" };
+    var parser = Parser{ .lx = &lx, .arena = &arena, .cur = lx.next(), .strict_order_keys = true };
+    try std.testing.expectError(error.UnexpectedToken, parser.parseProgram());
+}
+
+test "order by: strict_order_keys off allows arbitrary key expression" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    // Same query without the flag must continue to parse.
+    const st = try parseOneForTest("MATCH (n) RETURN n ORDER BY n.age + 1", &arena);
     try std.testing.expect(st == .Query);
 }
 
