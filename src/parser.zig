@@ -4836,6 +4836,27 @@ pub const Parser = struct {
         return items.toOwnedSlice(self.arena.allocator());
     }
 
+    /// Maps a `USING <name>` index-type identifier (case-insensitive) to an
+    /// `ast.IndexType`. Single source for both the before- and after-properties
+    /// `USING` positions in parseCreateIndex (QUAL-008). Unknown names are
+    /// rejected with error.InvalidIndexType.
+    fn parseIndexTypeName(type_str: []const u8) ParserError!ast.IndexType {
+        if (std.ascii.eqlIgnoreCase(type_str, "btree") or std.ascii.eqlIgnoreCase(type_str, "BTree")) return .btree;
+        if (std.ascii.eqlIgnoreCase(type_str, "hash") or std.ascii.eqlIgnoreCase(type_str, "Hash")) return .hash;
+        if (std.ascii.eqlIgnoreCase(type_str, "fulltext") or std.ascii.eqlIgnoreCase(type_str, "FullText")) return .fulltext;
+        if (std.ascii.eqlIgnoreCase(type_str, "spatial") or std.ascii.eqlIgnoreCase(type_str, "RTree")) return .spatial;
+        if (std.ascii.eqlIgnoreCase(type_str, "vector") or std.ascii.eqlIgnoreCase(type_str, "HNSW")) return .vector;
+        if (std.ascii.eqlIgnoreCase(type_str, "vector_f32")) return .vector_f32;
+        if (std.ascii.eqlIgnoreCase(type_str, "spatial_geographic")) return .spatial_geographic;
+        if (std.ascii.eqlIgnoreCase(type_str, "network_cidr") or std.ascii.eqlIgnoreCase(type_str, "PatriciaTrie") or std.ascii.eqlIgnoreCase(type_str, "trie")) return .network_cidr;
+        if (std.ascii.eqlIgnoreCase(type_str, "signature_crypto")) return .signature_crypto;
+        // IntervalTree / JsonbInverted / DomainTrie map to btree for now.
+        if (std.ascii.eqlIgnoreCase(type_str, "IntervalTree")) return .btree;
+        if (std.ascii.eqlIgnoreCase(type_str, "JsonbInverted")) return .btree;
+        if (std.ascii.eqlIgnoreCase(type_str, "DomainTrie")) return .btree;
+        return error.InvalidIndexType;
+    }
+
     // Parse CREATE INDEX statement
     fn parseCreateIndex(self: *Parser) ParserError!ast.Statement {
         var unique = false;
@@ -4967,38 +4988,7 @@ pub const Parser = struct {
         if (self.cur.kind == .USING) {
             self.advance();
             if (self.cur.kind == .identifier) {
-                const type_str = self.cur.lexeme;
-                if (std.ascii.eqlIgnoreCase(type_str, "btree") or std.ascii.eqlIgnoreCase(type_str, "BTree")) {
-                    index_type = .btree;
-                } else if (std.ascii.eqlIgnoreCase(type_str, "hash") or std.ascii.eqlIgnoreCase(type_str, "Hash")) {
-                    index_type = .hash;
-                } else if (std.ascii.eqlIgnoreCase(type_str, "fulltext") or std.ascii.eqlIgnoreCase(type_str, "FullText")) {
-                    index_type = .fulltext;
-                } else if (std.ascii.eqlIgnoreCase(type_str, "spatial") or std.ascii.eqlIgnoreCase(type_str, "RTree")) {
-                    index_type = .spatial;
-                } else if (std.ascii.eqlIgnoreCase(type_str, "vector") or std.ascii.eqlIgnoreCase(type_str, "HNSW")) {
-                    index_type = .vector;
-                } else if (std.ascii.eqlIgnoreCase(type_str, "vector_f32")) {
-                    index_type = .vector_f32;
-                } else if (std.ascii.eqlIgnoreCase(type_str, "spatial_geographic")) {
-                    index_type = .spatial_geographic;
-                } else if (std.ascii.eqlIgnoreCase(type_str, "network_cidr") or std.ascii.eqlIgnoreCase(type_str, "PatriciaTrie") or std.ascii.eqlIgnoreCase(type_str, "trie")) {
-                    index_type = .network_cidr;
-                } else if (std.ascii.eqlIgnoreCase(type_str, "signature_crypto")) {
-                    index_type = .signature_crypto;
-                } else if (std.ascii.eqlIgnoreCase(type_str, "IntervalTree")) {
-                    // IntervalTree - temporal/interval index (map to btree for now)
-                    index_type = .btree;
-                } else if (std.ascii.eqlIgnoreCase(type_str, "JsonbInverted")) {
-                    // JsonbInverted - JSONB GIN-style index (map to btree for now)
-                    index_type = .btree;
-                } else if (std.ascii.eqlIgnoreCase(type_str, "DomainTrie")) {
-                    // DomainTrie - domain name trie (map to btree for now)
-                    index_type = .btree;
-                } else {
-                    // Reject unrecognized index types
-                    return error.InvalidIndexType;
-                }
+                index_type = try parseIndexTypeName(self.cur.lexeme);
                 self.advance();
             }
         }
@@ -5054,35 +5044,7 @@ pub const Parser = struct {
         if (self.cur.kind == .USING) {
             self.advance();
             if (self.cur.kind == .identifier) {
-                const type_str = self.cur.lexeme;
-                if (std.ascii.eqlIgnoreCase(type_str, "btree") or std.ascii.eqlIgnoreCase(type_str, "BTree")) {
-                    index_type = .btree;
-                } else if (std.ascii.eqlIgnoreCase(type_str, "hash") or std.ascii.eqlIgnoreCase(type_str, "Hash")) {
-                    index_type = .hash;
-                } else if (std.ascii.eqlIgnoreCase(type_str, "fulltext") or std.ascii.eqlIgnoreCase(type_str, "FullText")) {
-                    index_type = .fulltext;
-                } else if (std.ascii.eqlIgnoreCase(type_str, "spatial") or std.ascii.eqlIgnoreCase(type_str, "RTree")) {
-                    index_type = .spatial;
-                } else if (std.ascii.eqlIgnoreCase(type_str, "vector") or std.ascii.eqlIgnoreCase(type_str, "HNSW")) {
-                    index_type = .vector;
-                } else if (std.ascii.eqlIgnoreCase(type_str, "vector_f32")) {
-                    index_type = .vector_f32;
-                } else if (std.ascii.eqlIgnoreCase(type_str, "spatial_geographic")) {
-                    index_type = .spatial_geographic;
-                } else if (std.ascii.eqlIgnoreCase(type_str, "network_cidr") or std.ascii.eqlIgnoreCase(type_str, "PatriciaTrie") or std.ascii.eqlIgnoreCase(type_str, "trie")) {
-                    index_type = .network_cidr;
-                } else if (std.ascii.eqlIgnoreCase(type_str, "signature_crypto")) {
-                    index_type = .signature_crypto;
-                } else if (std.ascii.eqlIgnoreCase(type_str, "IntervalTree")) {
-                    index_type = .btree;
-                } else if (std.ascii.eqlIgnoreCase(type_str, "JsonbInverted")) {
-                    index_type = .btree;
-                } else if (std.ascii.eqlIgnoreCase(type_str, "DomainTrie")) {
-                    index_type = .btree;
-                } else {
-                    // Reject unrecognized index types
-                    return error.InvalidIndexType;
-                }
+                index_type = try parseIndexTypeName(self.cur.lexeme);
                 self.advance();
             }
         }
