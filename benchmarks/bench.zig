@@ -273,8 +273,8 @@ fn benchPrintHuman() BenchResult {
 
     for (0..iterations) |_| {
         var buf: [4096]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&buf);
-        gql.print.printProgramHuman(fbs.writer(), program) catch {};
+        var w = std.Io.Writer.fixed(&buf);
+        gql.print.printProgramHuman(&w, program) catch {};
     }
 
     return .{ .name = "print human", .count = iterations, .total_ns = timer.read() };
@@ -295,8 +295,8 @@ fn benchPrintJson() BenchResult {
 
     for (0..iterations) |_| {
         var buf: [16384]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&buf);
-        gql.print.printProgramJsonWith(allocator, fbs.writer(), program, .{}) catch {};
+        var w = std.Io.Writer.fixed(&buf);
+        gql.print.printProgramJsonWith(allocator, &w, program, .{}) catch {};
     }
 
     return .{ .name = "print JSON", .count = iterations, .total_ns = timer.read() };

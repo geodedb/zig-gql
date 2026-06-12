@@ -97,13 +97,18 @@ const metrics = [_]Metric{
 // ---------------------------------------------------------------------------
 
 fn readJsonFile(allocator: std.mem.Allocator, path: []const u8) !BenchResult {
-    const file = std.fs.cwd().openFile(path, .{}) catch |err| {
-        print("Error: cannot open '{s}': {s}\n", .{ path, @errorName(err) });
+    // Zig 0.16: file reads go through the Io interface. Use the single-threaded
+    // blocking Io (this is a short-lived CLI tool).
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const content = std.Io.Dir.cwd().readFileAlloc(
+        io,
+        path,
+        allocator,
+        std.Io.Limit.limited(10 * 1024 * 1024),
+    ) catch |err| {
+        print("Error: cannot read '{s}': {s}\n", .{ path, @errorName(err) });
         return err;
     };
-    defer file.close();
-
-    const content = try file.readToEndAlloc(allocator, 10 * 1024 * 1024);
     defer allocator.free(content);
 
     const parsed = std.json.parseFromSlice(BenchResult, allocator, content, .{
@@ -146,24 +151,23 @@ fn isRegression(delta_pct: f64, kind: MetricKind, threshold: f64) bool {
 // Main
 // ---------------------------------------------------------------------------
 
-pub fn main() !void {
+pub fn main(init: std.process.Init.Minimal) !void {
     const allocator = std.heap.page_allocator;
 
-    var args = std.process.args();
-    _ = args.next(); // program name
+    // Zig 0.16 replaced `std.process.args()` with the Init-provided argument
+    // vector (argv[0] is the program name).
+    const argv = try init.args.toSlice(allocator);
 
-    const baseline_path = args.next() orelse {
+    if (argv.len < 3) {
         print("Usage: compare-bench <baseline.json> <current.json> [threshold%]\n", .{});
         std.process.exit(2);
-    };
-    const current_path = args.next() orelse {
-        print("Usage: compare-bench <baseline.json> <current.json> [threshold%]\n", .{});
-        std.process.exit(2);
-    };
+    }
+    const baseline_path = argv[1];
+    const current_path = argv[2];
 
     var threshold: f64 = 20.0;
-    if (args.next()) |thr_str| {
-        threshold = std.fmt.parseFloat(f64, thr_str) catch 20.0;
+    if (argv.len > 3) {
+        threshold = std.fmt.parseFloat(f64, argv[3]) catch 20.0;
     }
 
     const baseline = readJsonFile(allocator, baseline_path) catch {

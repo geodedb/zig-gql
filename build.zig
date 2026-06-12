@@ -111,6 +111,24 @@ pub fn build(b: *std.Build) void {
         module.addImport("thread_pool", tm);
     }
 
+    // Example program. Built (and runnable via `zig build example`) against
+    // the public `gql` module so it is compile-checked in CI and cannot rot
+    // out of sync with the API.
+    const example_exe = b.addExecutable(.{
+        .name = "basic-example",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/basic.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "gql", .module = module },
+            },
+        }),
+    });
+    const example_step = b.step("example", "Build and run the basic usage example");
+    const run_example = b.addRunArtifact(example_exe);
+    example_step.dependOn(&run_example.step);
+
     // Unit tests (run tests defined in the module itself)
     const test_step = b.step("test", "Run unit tests");
     const unit_test_mod = b.createModule(.{
@@ -165,6 +183,9 @@ pub fn build(b: *std.Build) void {
         .root_module = check_mod,
     });
     check_step.dependOn(&check.step);
+    // Compile-check the example too so it cannot rot out of sync with the API
+    // (it is not wired into install output, only verified).
+    check_step.dependOn(&example_exe.step);
 
     // ========================================================================
     // Observability seam (otel) — gated dependency + seam tests
