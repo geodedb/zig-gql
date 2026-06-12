@@ -3587,10 +3587,9 @@ pub const Parser = struct {
                         np.* = .{ .Ident = name };
                         cp.* = np.*;
                     }
-                    // Convert []*Expr -> []Expr view for validator
-                    var flat = std.ArrayList(ast.Expr).empty;
-                    for (args_slice) |p| try flat.append(self.arena.allocator(), p.*);
-                    if (!validateBuiltinCall(name.orig, try flat.toOwnedSlice(self.arena.allocator()), self.ts_extensions) and !std.ascii.eqlIgnoreCase(name.orig, "countDistinct")) return self.unexpected("invalid builtin function call");
+                    // Validate against the existing []*Expr directly — no
+                    // throwaway by-value flatten into a fresh arena list (PERF-102).
+                    if (!validateBuiltinCall(name.orig, args_slice, self.ts_extensions) and !std.ascii.eqlIgnoreCase(name.orig, "countDistinct")) return self.unexpected("invalid builtin function call");
                 }
                 base = .{ .Call = .{ .callee = cp, .args = args_slice } };
                 continue;
@@ -4143,139 +4142,156 @@ pub const Parser = struct {
         };
     }
 
-    fn validateBuiltinCall(name: []const u8, args: []ast.Expr, ts_enabled: bool) bool {
-        const n = args.len;
-        // Table of builtins: name, min_arity, max_arity (usize max means unbounded), validator
-        if (std.ascii.eqlIgnoreCase(name, "exists")) {
-            if (n != 1) return false;
-            return argIsPropertyLike(args[0]);
-        }
-        if (std.ascii.eqlIgnoreCase(name, "length")) {
-            return n == 1;
-        }
-        if (std.ascii.eqlIgnoreCase(name, "id")) {
-            return n == 1 and argIsPropertyLike(args[0]);
-        }
-        if (std.ascii.eqlIgnoreCase(name, "labels")) {
-            return n == 1 and (args[0] == .Ident or args[0] == .Member);
-        }
-        if (std.ascii.eqlIgnoreCase(name, "type")) {
-            // Accept any single expression for type() function
-            return n == 1;
-        }
-        if (std.ascii.eqlIgnoreCase(name, "coalesce")) {
-            return n >= 1;
-        }
-        if (std.ascii.eqlIgnoreCase(name, "toInteger")) {
-            // Accept any single expression for toInteger() function
-            return n == 1;
-        }
-        if (std.ascii.eqlIgnoreCase(name, "toString")) {
-            // Accept any single expression for toString() function
-            return n == 1;
-        }
-        // CANARY: REQ=REQ-GQL-CAST-003; FEATURE="TypeCasting"; ASPECT=Validation; STATUS=TESTED; TEST=geodetestlab/specs/geode_functions_comprehensive.yml; OWNER=parser; UPDATED=2026-01-25
-        if (std.ascii.eqlIgnoreCase(name, "cast")) {
-            // CAST(expr, type_string) - requires exactly 2 args
-            return n == 2;
-        }
-        if (std.ascii.eqlIgnoreCase(name, "abs")) {
-            return n == 1 and argIsNumericLike(args[0]);
-        }
-        // Vector types - accept array literal or string
-        if (std.ascii.eqlIgnoreCase(name, "VectorF32")) {
-            return n == 1 and (args[0] == .ArrayLit or argIsStringLike(args[0]));
-        }
-        if (std.ascii.eqlIgnoreCase(name, "VectorI32")) {
-            return n == 1 and (args[0] == .ArrayLit or argIsStringLike(args[0]));
-        }
-        // Geographic types - accept two numbers or one string
-        if (std.ascii.eqlIgnoreCase(name, "LatLon")) {
-            return (n == 2 and argIsNumericLike(args[0]) and argIsNumericLike(args[1])) or (n == 1 and argIsStringLike(args[0]));
-        }
-        if (std.ascii.eqlIgnoreCase(name, "LatLonAlt")) {
-            // Accept 3 numeric args (lat, lon, alt) or 4 args (lat, lon, alt, ref) or 1 string
-            if (n == 1 and argIsStringLike(args[0])) return true;
-            if (n == 3 and argIsNumericLike(args[0]) and argIsNumericLike(args[1]) and argIsNumericLike(args[2])) return true;
-            if (n == 4 and argIsNumericLike(args[0]) and argIsNumericLike(args[1]) and argIsNumericLike(args[2])) return true;
-            return false;
-        }
-        if (std.ascii.eqlIgnoreCase(name, "GeoPoint")) {
-            return (n == 2 and argIsNumericLike(args[0]) and argIsNumericLike(args[1])) or (n == 1 and argIsStringLike(args[0]));
-        }
-        // JSON/Geometry types - accept string
-        if (std.ascii.eqlIgnoreCase(name, "Jsonb")) {
-            return n == 1 and argIsStringLike(args[0]);
-        }
-        if (std.ascii.eqlIgnoreCase(name, "GeometryFromText")) {
-            return n == 1 and argIsStringLike(args[0]);
-        }
-        // Map functions
-        if (std.ascii.eqlIgnoreCase(name, "keys")) {
-            return n == 1; // Accept any expression that evaluates to a map
-        }
-        if (std.ascii.eqlIgnoreCase(name, "values")) {
-            return n == 1; // Accept any expression that evaluates to a map
-        }
-        if (ts_enabled) {
-            // Core time-series functions
-            if (std.ascii.eqlIgnoreCase(name, "last_value")) {
-                if (n != 1) return false;
-                return argIsPropertyLike(args[0]) or args[0] == .Ident or args[0] == .Member or argIsStringLike(args[0]);
-            }
-            if (std.ascii.eqlIgnoreCase(name, "value_at")) {
-                if (n != 2) return false;
-                return (argIsPropertyLike(args[0]) or args[0] == .Ident or args[0] == .Member or argIsStringLike(args[0])) and argIsNumericLike(args[1]);
-            }
-            if (std.ascii.eqlIgnoreCase(name, "sample_by")) {
-                if (n < 2 or n > 5) return false; // series, interval, [start_ts, end_ts, aggregation]
-                if (!(argIsPropertyLike(args[0]) or args[0] == .Ident or args[0] == .Member or argIsStringLike(args[0]))) return false;
-                if (!argIsNumericLike(args[1])) return false;
-                if (n >= 3 and !argIsNumericLike(args[2])) return false;
-                if (n >= 4 and !argIsNumericLike(args[3])) return false;
-                if (n == 5 and !(argIsStringLike(args[4]) or args[4] == .Ident)) return false;
-                return true;
-            }
-            // Advanced time-series functions
-            if (std.ascii.eqlIgnoreCase(name, "interpolate")) {
-                if (n < 2 or n > 3) return false; // series, timestamp, [method]
-                if (!(argIsPropertyLike(args[0]) or args[0] == .Ident or args[0] == .Member or argIsStringLike(args[0]))) return false;
-                if (!argIsNumericLike(args[1])) return false;
-                if (n == 3 and !(argIsStringLike(args[2]) or args[2] == .Ident)) return false;
-                return true;
-            }
-            if (std.ascii.eqlIgnoreCase(name, "moving_avg")) {
-                if (n != 3) return false; // series, window_ms, step_ms
-                if (!(argIsPropertyLike(args[0]) or args[0] == .Ident or args[0] == .Member or argIsStringLike(args[0]))) return false;
-                if (!argIsNumericLike(args[1])) return false;
-                if (!argIsNumericLike(args[2])) return false;
-                return true;
-            }
-            if (std.ascii.eqlIgnoreCase(name, "rate")) {
-                if (n != 2) return false; // series, interval_ms
-                if (!(argIsPropertyLike(args[0]) or args[0] == .Ident or args[0] == .Member or argIsStringLike(args[0]))) return false;
-                if (!argIsNumericLike(args[1])) return false;
-                return true;
-            }
-            if (std.ascii.eqlIgnoreCase(name, "derivative")) {
-                if (n < 1 or n > 2) return false; // series, [order]
-                if (!(argIsPropertyLike(args[0]) or args[0] == .Ident or args[0] == .Member or argIsStringLike(args[0]))) return false;
-                if (n == 2 and !argIsNumericLike(args[1])) return false;
-                return true;
-            }
-            if (std.ascii.eqlIgnoreCase(name, "time_bucket")) {
-                if (n != 4) return false; // series, bucket_ms, start_ts, end_ts
-                if (!(argIsPropertyLike(args[0]) or args[0] == .Ident or args[0] == .Member or argIsStringLike(args[0]))) return false;
-                if (!argIsNumericLike(args[1])) return false;
-                if (!argIsNumericLike(args[2])) return false;
-                if (!argIsNumericLike(args[3])) return false;
-                return true;
-            }
-        }
-        // Unknown functions: allow any arity for now
-        return true;
-    }
+    const Builtin = enum {
+        exists,
+        length,
+        id,
+        labels,
+        type_kw,
+        coalesce,
+        to_integer,
+        to_string,
+        cast,
+        abs,
+        vector_f32,
+        vector_i32,
+        lat_lon,
+        lat_lon_alt,
+        geo_point,
+        jsonb,
+        geometry_from_text,
+        keys,
+        values,
+        // time-series builtins — only enforced under ts extensions.
+        last_value,
+        value_at,
+        sample_by,
+        interpolate,
+        moving_avg,
+        rate,
+        derivative,
+        time_bucket,
+    };
 
+    // O(1) builtin dispatch (PERF-102). Keys are UPPERCASE; the lookup
+    // uppercases the (case-insensitive) call name once before probing.
+    const builtin_map = std.StaticStringMap(Builtin).initComptime(.{
+        .{ "EXISTS", .exists },
+        .{ "LENGTH", .length },
+        .{ "ID", .id },
+        .{ "LABELS", .labels },
+        .{ "TYPE", .type_kw },
+        .{ "COALESCE", .coalesce },
+        .{ "TOINTEGER", .to_integer },
+        .{ "TOSTRING", .to_string },
+        .{ "CAST", .cast },
+        .{ "ABS", .abs },
+        .{ "VECTORF32", .vector_f32 },
+        .{ "VECTORI32", .vector_i32 },
+        .{ "LATLON", .lat_lon },
+        .{ "LATLONALT", .lat_lon_alt },
+        .{ "GEOPOINT", .geo_point },
+        .{ "JSONB", .jsonb },
+        .{ "GEOMETRYFROMTEXT", .geometry_from_text },
+        .{ "KEYS", .keys },
+        .{ "VALUES", .values },
+        .{ "LAST_VALUE", .last_value },
+        .{ "VALUE_AT", .value_at },
+        .{ "SAMPLE_BY", .sample_by },
+        .{ "INTERPOLATE", .interpolate },
+        .{ "MOVING_AVG", .moving_avg },
+        .{ "RATE", .rate },
+        .{ "DERIVATIVE", .derivative },
+        .{ "TIME_BUCKET", .time_bucket },
+    });
+
+    fn validateBuiltinCall(name: []const u8, args: []const *ast.Expr, ts_enabled: bool) bool {
+        // Uppercase the call name once for a single O(1) map probe instead of a
+        // ~40-deep eqlIgnoreCase ladder. Unknown / over-long names are allowed
+        // (treated as user-defined functions), matching prior behavior.
+        var ubuf: [64]u8 = undefined;
+        if (name.len == 0 or name.len > ubuf.len) return true;
+        const uname = std.ascii.upperString(ubuf[0..name.len], name);
+        const id = builtin_map.get(uname) orelse return true;
+        const n = args.len;
+        return switch (id) {
+            .exists => n == 1 and argIsPropertyLike(args[0].*),
+            .length => n == 1,
+            .id => n == 1 and argIsPropertyLike(args[0].*),
+            .labels => n == 1 and (args[0].* == .Ident or args[0].* == .Member),
+            .type_kw => n == 1,
+            .coalesce => n >= 1,
+            .to_integer => n == 1,
+            .to_string => n == 1,
+            .cast => n == 2,
+            .abs => n == 1 and argIsNumericLike(args[0].*),
+            .vector_f32 => n == 1 and (args[0].* == .ArrayLit or argIsStringLike(args[0].*)),
+            .vector_i32 => n == 1 and (args[0].* == .ArrayLit or argIsStringLike(args[0].*)),
+            .lat_lon => (n == 2 and argIsNumericLike(args[0].*) and argIsNumericLike(args[1].*)) or (n == 1 and argIsStringLike(args[0].*)),
+            .lat_lon_alt => blk: {
+                if (n == 1 and argIsStringLike(args[0].*)) break :blk true;
+                if (n == 3 and argIsNumericLike(args[0].*) and argIsNumericLike(args[1].*) and argIsNumericLike(args[2].*)) break :blk true;
+                if (n == 4 and argIsNumericLike(args[0].*) and argIsNumericLike(args[1].*) and argIsNumericLike(args[2].*)) break :blk true;
+                break :blk false;
+            },
+            .geo_point => (n == 2 and argIsNumericLike(args[0].*) and argIsNumericLike(args[1].*)) or (n == 1 and argIsStringLike(args[0].*)),
+            .jsonb => n == 1 and argIsStringLike(args[0].*),
+            .geometry_from_text => n == 1 and argIsStringLike(args[0].*),
+            .keys => n == 1,
+            .values => n == 1,
+            .last_value => if (!ts_enabled) true else (n == 1 and (argIsPropertyLike(args[0].*) or args[0].* == .Ident or args[0].* == .Member or argIsStringLike(args[0].*))),
+            .value_at => if (!ts_enabled) true else (n == 2 and (argIsPropertyLike(args[0].*) or args[0].* == .Ident or args[0].* == .Member or argIsStringLike(args[0].*)) and argIsNumericLike(args[1].*)),
+            .sample_by => blk: {
+                if (!ts_enabled) break :blk true;
+                if (n < 2 or n > 5) break :blk false;
+                if (!(argIsPropertyLike(args[0].*) or args[0].* == .Ident or args[0].* == .Member or argIsStringLike(args[0].*))) break :blk false;
+                if (!argIsNumericLike(args[1].*)) break :blk false;
+                if (n >= 3 and !argIsNumericLike(args[2].*)) break :blk false;
+                if (n >= 4 and !argIsNumericLike(args[3].*)) break :blk false;
+                if (n == 5 and !(argIsStringLike(args[4].*) or args[4].* == .Ident)) break :blk false;
+                break :blk true;
+            },
+            .interpolate => blk: {
+                if (!ts_enabled) break :blk true;
+                if (n < 2 or n > 3) break :blk false;
+                if (!(argIsPropertyLike(args[0].*) or args[0].* == .Ident or args[0].* == .Member or argIsStringLike(args[0].*))) break :blk false;
+                if (!argIsNumericLike(args[1].*)) break :blk false;
+                if (n == 3 and !(argIsStringLike(args[2].*) or args[2].* == .Ident)) break :blk false;
+                break :blk true;
+            },
+            .moving_avg => blk: {
+                if (!ts_enabled) break :blk true;
+                if (n != 3) break :blk false;
+                if (!(argIsPropertyLike(args[0].*) or args[0].* == .Ident or args[0].* == .Member or argIsStringLike(args[0].*))) break :blk false;
+                if (!argIsNumericLike(args[1].*)) break :blk false;
+                if (!argIsNumericLike(args[2].*)) break :blk false;
+                break :blk true;
+            },
+            .rate => blk: {
+                if (!ts_enabled) break :blk true;
+                if (n != 2) break :blk false;
+                if (!(argIsPropertyLike(args[0].*) or args[0].* == .Ident or args[0].* == .Member or argIsStringLike(args[0].*))) break :blk false;
+                if (!argIsNumericLike(args[1].*)) break :blk false;
+                break :blk true;
+            },
+            .derivative => blk: {
+                if (!ts_enabled) break :blk true;
+                if (n < 1 or n > 2) break :blk false;
+                if (!(argIsPropertyLike(args[0].*) or args[0].* == .Ident or args[0].* == .Member or argIsStringLike(args[0].*))) break :blk false;
+                if (n == 2 and !argIsNumericLike(args[1].*)) break :blk false;
+                break :blk true;
+            },
+            .time_bucket => blk: {
+                if (!ts_enabled) break :blk true;
+                if (n != 4) break :blk false;
+                if (!(argIsPropertyLike(args[0].*) or args[0].* == .Ident or args[0].* == .Member or argIsStringLike(args[0].*))) break :blk false;
+                if (!argIsNumericLike(args[1].*)) break :blk false;
+                if (!argIsNumericLike(args[2].*)) break :blk false;
+                if (!argIsNumericLike(args[3].*)) break :blk false;
+                break :blk true;
+            },
+        };
+    }
     // Parse CREATE statement (CREATE pattern or CREATE INDEX)
     fn parseCreateStatement(self: *Parser) ParserError!ast.Statement {
         _ = try self.expect(.CREATE);
@@ -6776,6 +6792,44 @@ test "match routing: keyword-like label inside pattern does not trip delete dete
     // DELETE appears only inside the (...) at depth>0 as a label; the statement
     // is a Query, not a Delete.
     const st = try parseOneForTest("MATCH (n:DELETE) RETURN n", &arena);
+    try std.testing.expect(st == .Query);
+}
+
+// --- Builtin-call validation (PERF-102 StaticStringMap dispatch) ---
+
+test "builtin: abs(1) is accepted" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const st = try parseOneForTest("RETURN abs(1)", &arena);
+    try std.testing.expect(st == .Query);
+}
+
+test "builtin: case-insensitive name (ABS) is accepted" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const st = try parseOneForTest("RETURN ABS(2)", &arena);
+    try std.testing.expect(st == .Query);
+}
+
+test "builtin: abs() with wrong arity is rejected" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var lx = Lexer{ .src = "RETURN abs()" };
+    var parser = Parser{ .lx = &lx, .arena = &arena, .cur = lx.next() };
+    try std.testing.expectError(error.UnexpectedToken, parser.parseProgram());
+}
+
+test "builtin: coalesce accepts variadic args" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const st = try parseOneForTest("RETURN coalesce(1, 2, 3)", &arena);
+    try std.testing.expect(st == .Query);
+}
+
+test "builtin: unknown function is allowed (any arity)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const st = try parseOneForTest("RETURN myCustomFn(1, 2, 3)", &arena);
     try std.testing.expect(st == .Query);
 }
 
