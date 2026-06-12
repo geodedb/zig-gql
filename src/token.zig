@@ -541,3 +541,16 @@ test "keywordKind handles words exceeding buffer length" {
     try std.testing.expect(long_word.len > 64);
     try std.testing.expectEqual(TokenKind.identifier, keywordKind(long_word));
 }
+
+test "every tokenized keyword has language metadata (drift guard)" {
+    // token.zig's KeywordMap and language_metadata.keywords are two hand-
+    // maintained lists that must stay in sync (QUAL-005). This guard fails if
+    // any tokenized keyword lacks a metadata entry, so LSP completion /
+    // syntax highlighting can never silently omit a real keyword again.
+    for (KeywordMap.keys()) |kw| {
+        if (language_metadata.findKeyword(kw) == null) {
+            std.debug.print("Keyword '{s}' is tokenized but missing from language_metadata.keywords\n", .{kw});
+            try std.testing.expect(false);
+        }
+    }
+}

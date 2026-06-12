@@ -100,6 +100,7 @@ pub const keywords = [_]KeywordInfo{
     .{ .name = "BEGIN", .category = .transaction, .compliance = .iso_gql, .doc = "Begin a transaction" },
     .{ .name = "BINDING", .category = .reserved, .compliance = .iso_gql, .doc = "Binding table reference" },
     .{ .name = "BINDINGS", .category = .reserved, .compliance = .iso_gql, .doc = "Multiple binding table references" },
+    .{ .name = "BOOLEAN", .category = .type_keyword, .compliance = .iso_gql, .doc = "Boolean type keyword" },
     .{ .name = "BY", .category = .ordering, .compliance = .iso_gql, .doc = "Used with ORDER BY, GROUP BY" },
     // C
     .{ .name = "CALL", .category = .clause, .compliance = .iso_gql, .doc = "Call a procedure" },
@@ -115,6 +116,9 @@ pub const keywords = [_]KeywordInfo{
     .{ .name = "CSV", .category = .reserved, .compliance = .cypher_compat, .doc = "CSV file format for LOAD" },
     .{ .name = "CURRENT", .category = .temporal, .compliance = .iso_gql, .doc = "Current timestamp/date/time" },
     // D
+    .{ .name = "DATE", .category = .temporal, .compliance = .iso_gql, .doc = "Date type keyword" },
+    .{ .name = "DATETIME", .category = .temporal, .compliance = .iso_gql, .doc = "Datetime type keyword" },
+    .{ .name = "DECIMAL", .category = .type_keyword, .compliance = .iso_gql, .doc = "Arbitrary-precision decimal type keyword" },
     .{ .name = "DELETE", .category = .clause, .compliance = .iso_gql, .doc = "Delete nodes or edges" },
     .{ .name = "DESC", .category = .ordering, .compliance = .iso_gql, .doc = "Descending sort order" },
     .{ .name = "DETACH", .category = .clause, .compliance = .iso_gql, .doc = "Detach delete (remove edges first)" },
@@ -137,6 +141,7 @@ pub const keywords = [_]KeywordInfo{
     .{ .name = "FILTER", .category = .clause, .compliance = .iso_gql, .doc = "Filter clause" },
     .{ .name = "FINISH", .category = .clause, .compliance = .iso_gql, .doc = "Finish a linear graph query" },
     .{ .name = "FIRST", .category = .ordering, .compliance = .iso_gql, .doc = "NULLS FIRST ordering" },
+    .{ .name = "FLOAT", .category = .type_keyword, .compliance = .iso_gql, .doc = "Floating-point type keyword" },
     .{ .name = "FOR", .category = .reserved, .compliance = .iso_gql, .doc = "For loop" },
     .{ .name = "FOREACH", .category = .clause, .compliance = .cypher_compat, .doc = "Iterate over a list" },
     .{ .name = "FROM", .category = .clause, .compliance = .iso_gql, .doc = "Source specification" },
@@ -151,6 +156,7 @@ pub const keywords = [_]KeywordInfo{
     .{ .name = "IN", .category = .comparison, .compliance = .iso_gql, .doc = "Membership predicate" },
     .{ .name = "INDEX", .category = .ddl, .compliance = .iso_gql, .doc = "Index definition" },
     .{ .name = "INSERT", .category = .clause, .compliance = .iso_gql, .doc = "Insert data" },
+    .{ .name = "INTEGER", .category = .type_keyword, .compliance = .iso_gql, .doc = "Integer type keyword" },
     .{ .name = "INTERSECT", .category = .set_operation, .compliance = .iso_gql, .doc = "Set intersection operation" },
     .{ .name = "IS", .category = .comparison, .compliance = .iso_gql, .doc = "Type/NULL checking predicate" },
     // J
@@ -221,10 +227,13 @@ pub const keywords = [_]KeywordInfo{
     .{ .name = "START", .category = .transaction, .compliance = .iso_gql, .doc = "Start transaction" },
     .{ .name = "STARTS", .category = .comparison, .compliance = .iso_gql, .doc = "String starts-with predicate" },
     .{ .name = "START_NODE", .category = .type_keyword, .compliance = .cypher_compat, .doc = "Start node of a relationship" },
+    .{ .name = "STRING", .category = .type_keyword, .compliance = .iso_gql, .doc = "String type keyword" },
     .{ .name = "SUM", .category = .aggregation, .compliance = .iso_gql, .doc = "Sum aggregate function" },
     // T
     .{ .name = "TABLE", .category = .ddl, .compliance = .iso_gql, .doc = "Table reference" },
     .{ .name = "THEN", .category = .clause, .compliance = .iso_gql, .doc = "THEN branch in CASE" },
+    .{ .name = "TIME", .category = .temporal, .compliance = .iso_gql, .doc = "Time type keyword" },
+    .{ .name = "TIMESTAMP", .category = .temporal, .compliance = .iso_gql, .doc = "Timestamp type keyword" },
     .{ .name = "TO", .category = .reserved, .compliance = .iso_gql, .doc = "Range endpoint" },
     .{ .name = "TRAIL", .category = .path_pattern, .compliance = .iso_gql, .doc = "Trail path (no repeated edges)" },
     .{ .name = "TRANSACTION", .category = .transaction, .compliance = .iso_gql, .doc = "Transaction keyword" },
@@ -248,6 +257,8 @@ pub const keywords = [_]KeywordInfo{
     .{ .name = "WRITE", .category = .transaction, .compliance = .iso_gql, .doc = "Write transaction mode" },
     // X
     .{ .name = "XOR", .category = .boolean_operator, .compliance = .iso_gql, .doc = "Logical XOR operator" },
+    // Y
+    .{ .name = "YIELD", .category = .clause, .compliance = .iso_gql, .doc = "Yields named result columns from a procedure CALL (CALL ... YIELD ...)" },
     // Z
     .{ .name = "ZONE", .category = .temporal, .compliance = .iso_gql, .doc = "Time zone" },
     .{ .name = "ZONED", .category = .temporal, .compliance = .iso_gql, .doc = "Zoned datetime" },
