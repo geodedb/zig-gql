@@ -253,21 +253,22 @@ pub const Lexer = struct {
         const start = self.idx;
         const loc: t.Location = .{ .line = self.line, .column = self.col };
 
-        // Handle Unicode identifiers - read UTF-8 code points
+        // Handle Unicode identifiers - read UTF-8 code points. The iterator
+        // already advances by each codepoint's byte length, so derive the
+        // consumed-byte count from `iter.i` rather than re-decoding the lead
+        // byte's sequence length on every codepoint (PERF-107).
         var iter = std.unicode.Utf8Iterator{ .bytes = self.src[self.idx..], .i = 0 };
         var first = true;
+        var consumed: usize = 0;
 
         while (iter.nextCodepoint()) |cp| {
-            if (first) {
-                first = false;
-                if (!t.isIdentifierStart(cp)) break;
-            } else {
-                if (!t.isIdentifierContinue(cp)) break;
-            }
-            const cp_len = std.unicode.utf8CodepointSequenceLength(self.src[self.idx]) catch 1;
-            self.idx += cp_len;
+            const ok = if (first) t.isIdentifierStart(cp) else t.isIdentifierContinue(cp);
+            if (!ok) break;
+            first = false;
+            consumed = iter.i; // bytes confirmed as part of the identifier so far
             self.col += 1;
         }
+        self.idx += consumed;
         const slice = self.src[start..self.idx];
         // case-insensitive keyword mapping
         const kind = t.keywordKind(slice);

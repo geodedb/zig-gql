@@ -206,3 +206,53 @@ pub const global = if (enabled) struct {
     pub var tracer: ?*otel.api.trace.Tracer = null;
     pub var meter: ?*otel.api.metrics.Meter = null;
 } else struct {};
+
+// ============================================================================
+// In-module unit tests (GAP-TEST-003)
+// ============================================================================
+//
+// The seam is currently compiled as a permanent no-op (`enabled = false`).
+// These tests pin that contract and verify every public helper is inert and
+// type-safe under the disabled build (the otel-enabled behavior is covered by
+// tests/observability_enabled_test.zig).
+
+const testing = std.testing;
+
+test "seam is compiled as a no-op" {
+    try testing.expectEqual(false, enabled);
+    try testing.expectEqual(@as(usize, 1024), max_statement_bytes);
+}
+
+test "query-execution span helpers are inert no-ops" {
+    var span = startQueryExecutionSpan("query", "MyOp");
+    endQueryExecutionSpan(span, true, 0);
+    span.end(null);
+
+    var span2 = startQueryExecutionSpan("mutation", null);
+    endQueryExecutionSpan(span2, false, 3);
+    span2.end(null);
+}
+
+test "client/server span helpers are inert no-ops" {
+    var c = startClientSpan(.{ .method = "POST", .url = "https://example.test/gql" });
+    endClientSpan(c, 200);
+    c.end(null);
+
+    var s = startServerSpan(.{ .method = "GET", .route = "/gql", .url = "/gql" });
+    endServerSpan(s, 500);
+    s.end(null);
+}
+
+test "setQueryStatement is a no-op when disabled" {
+    var span = startQueryExecutionSpan("query", null);
+    // Long body must not panic even though nothing is recorded.
+    const long = "RETURN " ++ ("x" ** 4096);
+    setQueryStatement(span, long);
+    span.end(null);
+}
+
+test "Span fallback end signature accepts an optional timestamp" {
+    var span: Span = .{};
+    span.end(null);
+    span.end(12345);
+}

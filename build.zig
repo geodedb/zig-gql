@@ -209,6 +209,19 @@ pub fn build(b: *std.Build) void {
     const run_observability_disabled_tests = b.addRunArtifact(observability_disabled_tests);
     test_step.dependOn(&run_observability_disabled_tests.step);
 
+    // In-module unit tests for the observability seam itself (GAP-TEST-003).
+    // The seam is its own module (src/observability.zig), so its `test` blocks
+    // only run when compiled as a test root — wire that in here.
+    const observability_unit_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/observability.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_observability_unit_tests = b.addRunArtifact(observability_unit_tests);
+    test_step.dependOn(&run_observability_unit_tests.step);
+
     // Enabled-mode smoke test. Skips under -Dwith_otel=false; under
     // -Dwith_otel=true it installs an in-memory recorder, drives one
     // query-execution span through the seam, and asserts the recorder
