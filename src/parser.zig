@@ -435,12 +435,30 @@ pub const Parser = struct {
         return .{ .desc = desc, .nulls = nulls };
     }
 
-    /// Top-level parse entry. Emits one observability span shaped as a
-    /// GraphQL query execution (`db.system="graphql"`,
-    /// `graphql.operation.type="query"`). The seam is a comptime no-op
-    /// when -Dwith_otel=false, so this wrapper has zero overhead in the
-    /// default build. Implementation lives in `parseProgramImpl`; this
-    /// thin shim only owns the span lifecycle.
+    /// Top-level parse entry: parses the full token stream into an
+    /// `ast.Program`.
+    ///
+    /// Memory: every node in the returned `ast.Program` (and all nodes it
+    /// transitively owns) is allocated from the caller-provided
+    /// `self.arena`. The caller owns that arena and frees the entire AST by
+    /// calling `arena.deinit()`; individual nodes must not be freed. To bound
+    /// memory on untrusted input, back the arena with a memory-limited
+    /// allocator (see the Security Notes in `root.zig`).
+    ///
+    /// Errors: returns `ParserError` — `error.UnexpectedToken` for malformed
+    /// or too-deeply-nested input (recursion is bounded; see MAX_RECUR_DEPTH /
+    /// MAX_EXPR_DEPTH), `error.OutOfMemory` from the arena, and
+    /// `error.Overflow`/`error.InvalidCharacter`/`error.InvalidIndexType` from
+    /// numeric/index literal parsing. On error, `self.last_error` may hold a
+    /// human-readable context string. Errors never leave the process in an
+    /// unsafe state (no partial writes escape; the arena still owns whatever
+    /// was allocated).
+    ///
+    /// Observability: emits one span shaped as a GraphQL query execution
+    /// (`db.system="graphql"`, `graphql.operation.type="query"`). The seam is
+    /// a comptime no-op when otel is disabled, so this wrapper has zero
+    /// overhead in the default build. Implementation lives in
+    /// `parseProgramImpl`; this thin shim only owns the span lifecycle.
     pub fn parseProgram(self: *Parser) ParserError!ast.Program {
         // We don't yet know the operation_type until at least one
         // statement is parsed. Default to "query" — matches the

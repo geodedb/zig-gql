@@ -24,8 +24,12 @@ pub const Lexer = struct {
         // Handle quotes first before other matching to avoid issues
         if (c == '\'') return self.scanStringAny(c);
         if (c == '"') {
-            // For now, treat double quotes same as single quotes to avoid hangs
-            // This is a temporary fix until proper double quote handling is implemented
+            // Documented limitation: double-quoted text is lexed as a string
+            // literal, identical to single-quoted text. ISO GQL distinguishes
+            // double-quoted *delimited identifiers*, but that is not yet
+            // implemented here, so the `quoted_identifier` TokenKind is never
+            // produced. Consumers must not rely on `"..."` tokenizing as an
+            // identifier.
             return self.scanStringAny('"');
         }
 

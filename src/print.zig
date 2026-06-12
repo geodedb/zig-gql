@@ -460,6 +460,12 @@ fn printRel(w: anytype, r: ast.RelPattern) !void {
     try w.writeByte(']');
 }
 
+/// Prints a single expression in human-readable form.
+///
+/// NOTE: `prec` is currently reserved and ignored (see `printExprWith`). The
+/// printer does not insert precedence-based parentheses, so its output is for
+/// human inspection / debugging and is NOT guaranteed to re-parse to the same
+/// AST. Pass `0` unless/until precedence handling is implemented.
 pub fn printExpr(w: anytype, e: ast.Expr, prec: u8) !void {
     return printExprWith(w, e, prec, .{});
 }
@@ -473,6 +479,10 @@ pub fn stringifyExprAlloc(allocator: std.mem.Allocator, e: ast.Expr, opts: Print
 }
 
 pub fn printExprWith(w: anytype, e: ast.Expr, prec: u8, opts: PrintOptions) !void {
+    // `prec` is reserved for future precedence-aware parenthesization. The
+    // printer currently emits operators without parentheses, so output is not
+    // guaranteed to round-trip through the parser. The parameter is kept in
+    // the signature so callers and a future implementation stay source-compat.
     _ = prec;
     switch (e) {
         .Ident => |id| try w.print("{s}", .{id.orig}),
