@@ -46,8 +46,23 @@ pub const Parser = struct {
     pattern_comp_depth: u32 = 0,
     // Recursion depth counter for expression parsing (guards against stack overflow)
     expr_depth: u16 = 0,
+    // Recursion depth counter for the statement/query/pattern grammar. The
+    // expression guard above only bounds expression nesting; this one bounds
+    // structural nesting (CALL{ subquery }, parenthesized statements,
+    // shortestPath(( ... )), etc.) so adversarial input cannot exhaust the
+    // native call stack (SIGSEGV in ReleaseFast / panic in ReleaseSafe).
+    // See GQL-APPSEC-01/02/03, QUAL-002/003.
+    recur_depth: u16 = 0,
 
     const MAX_EXPR_DEPTH = 256;
+    // Structural recursion limit. Kept well below MAX_EXPR_DEPTH because the
+    // statement/query/pattern functions (parseQuery, parseStatement,
+    // parseGraphPattern) have far larger stack frames than the expression
+    // functions: empirically ~256 structural frames overflow an 8 MiB stack
+    // while ~128 do not, so 100 leaves comfortable margin (and remains safe on
+    // smaller worker-thread stacks). 100 levels of structural nesting is far
+    // beyond any realistic GQL query.
+    const MAX_RECUR_DEPTH = 100;
 
     fn advance(self: *Parser) void {
         self.cur = self.lx.next();
@@ -621,6 +636,9 @@ pub const Parser = struct {
     }
 
     fn parseStatement(self: *Parser) ParserError!ast.Statement {
+        self.recur_depth += 1;
+        defer self.recur_depth -= 1;
+        if (self.recur_depth > MAX_RECUR_DEPTH) return error.UnexpectedToken;
         return switch (self.cur.kind) {
             .VALUES => self.parseValuesStatement(),
             .FOR => self.parseForStatement(),
@@ -1612,6 +1630,9 @@ pub const Parser = struct {
     }
 
     fn parseQuery(self: *Parser) ParserError!ast.Query {
+        self.recur_depth += 1;
+        defer self.recur_depth -= 1;
+        if (self.recur_depth > MAX_RECUR_DEPTH) return error.UnexpectedToken;
         // Parse LET bindings first (LET $var = expr, ...)
         var let_bindings = std.ArrayList(ast.LetBinding).empty;
         if (self.cur.kind == .LET) {
@@ -2605,6 +2626,9 @@ pub const Parser = struct {
     }
 
     fn parseGraphPattern(self: *Parser) ParserError!ast.GraphPattern {
+        self.recur_depth += 1;
+        defer self.recur_depth -= 1;
+        if (self.recur_depth > MAX_RECUR_DEPTH) return error.UnexpectedToken;
         var chains = std.ArrayList(ast.Chain).empty;
 
         // CANARY: REQ=REQ-GQL-PATH-MODES-003; FEATURE="GQL Path Mode Parsing"; ASPECT=Parser; STATUS=TESTED; TEST=geodetestlab/specs/gql_pattern_matching_comprehensive.yml; OWNER=parser; UPDATED=2026-01-08
@@ -6682,5 +6706,95 @@ test "parser - <> operator works" {
         std.debug.print("Parse error: {s}\n", .{@errorName(err)});
         return err;
     };
+    try std.testing.expect(program.statements.len > 0);
+}
+
+// --- Regression tests for unbounded structural recursion (stack-exhaustion DoS) ---
+// GQL-APPSEC-01/02/03, QUAL-002/003: deeply nested statement/query/pattern grammar
+// must return a ParserError rather than overflowing the native call stack (SIGSEGV
+// in ReleaseFast, panic in ReleaseSafe). Each test builds input far past the depth
+// limit and asserts parseProgram returns an error instead of crashing the process.
+
+test "parser - deeply nested CALL subqueries return error, not crash" {
+    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
+    const depth: usize = 5000;
+    var src = std.ArrayList(u8).empty;
+    defer src.deinit(allocator);
+    var i: usize = 0;
+    while (i < depth) : (i += 1) try src.appendSlice(allocator, "CALL{");
+    try src.appendSlice(allocator, "RETURN 1");
+    i = 0;
+    while (i < depth) : (i += 1) try src.append(allocator, '}');
+
+    var lx = Lexer{ .src = src.items };
+    var parser = Parser{ .lx = &lx, .arena = &arena, .cur = lx.next() };
+    try std.testing.expectError(error.UnexpectedToken, parser.parseProgram());
+}
+
+test "parser - deeply nested parenthesized statements return error, not crash" {
+    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
+    const depth: usize = 5000;
+    var src = std.ArrayList(u8).empty;
+    defer src.deinit(allocator);
+    var i: usize = 0;
+    while (i < depth) : (i += 1) try src.append(allocator, '(');
+    try src.appendSlice(allocator, "RETURN 1");
+    i = 0;
+    while (i < depth) : (i += 1) try src.append(allocator, ')');
+
+    var lx = Lexer{ .src = src.items };
+    var parser = Parser{ .lx = &lx, .arena = &arena, .cur = lx.next() };
+    try std.testing.expectError(error.UnexpectedToken, parser.parseProgram());
+}
+
+test "parser - deeply nested shortestPath patterns return error, not crash" {
+    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
+    const depth: usize = 5000;
+    var src = std.ArrayList(u8).empty;
+    defer src.deinit(allocator);
+    try src.appendSlice(allocator, "MATCH ");
+    var i: usize = 0;
+    while (i < depth) : (i += 1) try src.appendSlice(allocator, "p=shortestPath(");
+    try src.appendSlice(allocator, "(a)-[]->(b)");
+    i = 0;
+    while (i < depth) : (i += 1) try src.append(allocator, ')');
+    try src.appendSlice(allocator, " RETURN 1");
+
+    var lx = Lexer{ .src = src.items };
+    var parser = Parser{ .lx = &lx, .arena = &arena, .cur = lx.next() };
+    // Either a structural-depth error or a normal parse error is acceptable; the
+    // contract is "does not crash the process".
+    const result = parser.parseProgram();
+    try std.testing.expectError(error.UnexpectedToken, result);
+}
+
+test "parser - moderately nested parenthesized statements within limit still parse" {
+    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
+    // 50 levels of parenthesized statement nesting is well within the structural
+    // recursion limit and must continue to parse without error.
+    const depth: usize = 50;
+    var src = std.ArrayList(u8).empty;
+    defer src.deinit(allocator);
+    var i: usize = 0;
+    while (i < depth) : (i += 1) try src.append(allocator, '(');
+    try src.appendSlice(allocator, "RETURN 1");
+    i = 0;
+    while (i < depth) : (i += 1) try src.append(allocator, ')');
+
+    var lx = Lexer{ .src = src.items };
+    var parser = Parser{ .lx = &lx, .arena = &arena, .cur = lx.next() };
+    const program = try parser.parseProgram();
     try std.testing.expect(program.statements.len > 0);
 }
