@@ -255,11 +255,37 @@ pub const Parser = struct {
         return tkn.kind;
     }
 
-    fn peek2Kind(self: *Parser) tok.TokenKind {
+    /// Token-only lookahead (PERF-101): decide whether the MATCH statement at
+    /// the current position is a MATCH...DELETE / DETACH DELETE form, WITHOUT
+    /// parsing the graph pattern into the arena. `self.cur` must be `.MATCH`.
+    ///
+    /// Scans a copy of the lexer (parser state is left untouched), tracking
+    /// (), [], {} nesting. The first depth-0 clause/statement keyword after the
+    /// pattern and any optional WHERE decides: DELETE/DETACH => true, anything
+    /// else => false. WHERE is transparent — its expression is scanned through
+    /// until the next decision keyword. Reserved keywords cannot appear as bare
+    /// identifiers, so a depth-0 DELETE/DETACH unambiguously marks a delete.
+    /// A negative nesting depth means an enclosing (...)/[...]/{...} closed, so
+    /// the MATCH ended without a delete.
+    fn matchIsDelete(self: *const Parser) bool {
         var tmp = self.lx.*;
-        _ = tmp.next();
-        const t2 = tmp.next();
-        return t2.kind;
+        var depth: i32 = 0;
+        var guard: usize = 0;
+        while (guard < 1_000_000) : (guard += 1) {
+            const t = tmp.next();
+            switch (t.kind) {
+                .l_paren, .l_bracket, .l_brace => depth += 1,
+                .r_paren, .r_bracket, .r_brace => {
+                    depth -= 1;
+                    if (depth < 0) return false;
+                },
+                .DELETE, .DETACH => if (depth <= 0) return true,
+                .RETURN, .SET, .REMOVE, .CREATE, .MERGE, .INSERT, .WITH, .CALL, .UNION, .YIELD, .FINISH, .NEXT, .ORDER, .LIMIT, .OFFSET, .SKIP, .MATCH, .OPTIONAL, .semicolon => if (depth <= 0) return false,
+                .eof => return false,
+                else => {},
+            }
+        }
+        return false;
     }
 
     fn expect(self: *Parser, kind: tok.TokenKind) !tok.Token {
@@ -748,33 +774,12 @@ pub const Parser = struct {
                 break :blk_select .{ .Query = query };
             },
             .MATCH => blk_match: {
-                // Check if this is a MATCH...DELETE pattern
-                // We need to look ahead after parsing the MATCH pattern
-                const saved_pos = self.lx.*;
-                const saved_cur = self.cur;
-
-                // Try to detect MATCH...DELETE pattern
-                self.advance(); // Skip MATCH
-                _ = self.parseGraphPattern() catch {
-                    // If pattern parsing fails, restore and parse as query
-                    self.lx.* = saved_pos;
-                    self.cur = saved_cur;
-                    const first = try self.parseQuery();
-                    break :blk_match self.handleQueryResult(first);
-                };
-
-                // Check for optional WHERE
-                if (self.cur.kind == .WHERE) {
-                    self.advance();
-                    _ = self.parseOrExpr() catch {};
-                }
-
-                // Check if DELETE or DETACH DELETE follows
-                const is_delete = self.cur.kind == .DELETE or self.cur.kind == .DETACH;
-
-                // Restore position
-                self.lx.* = saved_pos;
-                self.cur = saved_cur;
+                // Decide MATCH vs MATCH...DELETE with token-only lookahead so we
+                // do not build (and immediately discard) a speculative pattern
+                // AST for every MATCH statement (PERF-101). `matchIsDelete`
+                // scans a copy of the lexer and leaves parser state untouched,
+                // so both branches below start cleanly at the `MATCH` token.
+                const is_delete = self.matchIsDelete();
 
                 if (is_delete) {
                     // Parse as MATCH...DELETE statement
@@ -2467,14 +2472,12 @@ pub const Parser = struct {
         } else if (!have_match and !have_create) {
             // No pattern - check if we have RETURN
             if (self.cur.kind != .RETURN) {
-                _ = try self.expect(.RETURN);
-                unreachable;
+                return self.unexpected("RETURN");
             }
             // RETURN-only query without pattern is allowed
         } else {
             // No SET/REMOVE/CREATE, no chaining, and no RETURN - error
-            _ = try self.expect(.RETURN);
-            unreachable;
+            return self.unexpected("RETURN");
         }
 
         var ord: ?ast.OrderBy = null;
@@ -3980,6 +3983,11 @@ pub const Parser = struct {
                 }
                 // CANARY: REQ=REQ-GQL-164; FEATURE="Pattern Comprehension Shorthand"; ASPECT=Parser; STATUS=TESTED; OWNER=parser; UPDATED=2025-10-14
                 self.pattern_comp_depth += 1;
+                // defer the decrement so the counter is restored on every exit
+                // path — the `try` calls below would otherwise leak the
+                // increment on error, corrupting `|`-disambiguation state for
+                // any later reuse of the parser.
+                defer self.pattern_comp_depth -= 1;
                 const pat_val = try self.parseGraphPattern();
                 var where_expr: ?*ast.Expr = null;
                 if (self.cur.kind == .WHERE) {
@@ -4011,7 +4019,6 @@ pub const Parser = struct {
                 const mp = try self.arena.allocator().create(ast.Expr);
                 mp.* = map_expr_v;
                 _ = try self.expect(.r_bracket);
-                self.pattern_comp_depth -= 1;
                 const a = self.arena.allocator();
                 const pat_ptr = try a.create(ast.GraphPattern);
                 pat_ptr.* = pat_val;
@@ -4465,8 +4472,7 @@ pub const Parser = struct {
                 return_clause = .{ .items = &.{}, .distinct = false };
             } else {
                 // No SET/REMOVE/DELETE and no RETURN after WITH - error
-                _ = try self.expect(.RETURN);
-                unreachable;
+                return self.unexpected("RETURN");
             }
 
             // Return a Query with create_pattern set (no chaining)
@@ -6707,6 +6713,70 @@ test "parser - <> operator works" {
         return err;
     };
     try std.testing.expect(program.statements.len > 0);
+}
+
+// --- MATCH vs MATCH...DELETE routing (PERF-101 token lookahead) ---
+// These pin the statement-classification behavior so the token-only
+// `matchIsDelete` lookahead can never misroute a MATCH. Each case parses and
+// asserts the resulting top-level statement kind (Delete vs Query).
+
+fn parseOneForTest(src: []const u8, arena: *std.heap.ArenaAllocator) !ast.Statement {
+    var lx = Lexer{ .src = src };
+    var parser = Parser{ .lx = &lx, .arena = arena, .cur = lx.next() };
+    const program = try parser.parseProgram();
+    try std.testing.expect(program.statements.len >= 1);
+    return program.statements[0];
+}
+
+test "match routing: plain MATCH...RETURN is a Query" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const st = try parseOneForTest("MATCH (n) RETURN n", &arena);
+    try std.testing.expect(st == .Query);
+}
+
+test "match routing: MATCH...WHERE...RETURN is a Query" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const st = try parseOneForTest("MATCH (n)-[r]->(m) WHERE n.x = 1 RETURN n, m", &arena);
+    try std.testing.expect(st == .Query);
+}
+
+test "match routing: MATCH...DELETE is a Delete" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const st = try parseOneForTest("MATCH (n:Temp) DELETE n", &arena);
+    try std.testing.expect(st == .Delete);
+}
+
+test "match routing: MATCH...WHERE...DELETE is a Delete" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const st = try parseOneForTest("MATCH (n) WHERE n.active DELETE n", &arena);
+    try std.testing.expect(st == .Delete);
+}
+
+test "match routing: MATCH...DETACH DELETE is a Delete" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const st = try parseOneForTest("MATCH (n)-[r]->(m) DETACH DELETE n", &arena);
+    try std.testing.expect(st == .Delete);
+}
+
+test "match routing: relationship pattern then DELETE is a Delete" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const st = try parseOneForTest("MATCH (a)-[r:KNOWS]->(b) DELETE r", &arena);
+    try std.testing.expect(st == .Delete);
+}
+
+test "match routing: keyword-like label inside pattern does not trip delete detection" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    // DELETE appears only inside the (...) at depth>0 as a label; the statement
+    // is a Query, not a Delete.
+    const st = try parseOneForTest("MATCH (n:DELETE) RETURN n", &arena);
+    try std.testing.expect(st == .Query);
 }
 
 // --- Regression tests for unbounded structural recursion (stack-exhaustion DoS) ---
