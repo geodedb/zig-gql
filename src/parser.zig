@@ -956,16 +956,18 @@ pub const Parser = struct {
 
                     if (self.cur.kind == .LIMIT) {
                         self.advance();
-                        const limit_expr = try self.parseOrExpr();
-                        if (limit_expr != .Int) return self.unexpected("LIMIT requires integer constant");
-                        limit_val = @intCast(limit_expr.Int);
+                        // Use parseLimitValue so `LIMIT $param` is accepted
+                        // identically to every other set-op arm (QUAL-009).
+                        const lim = try self.parseLimitValue();
+                        limit_val = lim.value;
+                        limit_param = lim.param;
                     }
 
                     if (self.cur.kind == .OFFSET or self.cur.kind == .SKIP) {
                         self.advance();
-                        const offset_expr = try self.parseOrExpr();
-                        if (offset_expr != .Int) return self.unexpected("OFFSET/SKIP requires integer constant");
-                        offset_val = @intCast(offset_expr.Int);
+                        const off = try self.parseLimitValue();
+                        offset_val = off.value;
+                        offset_param = off.param;
                     }
 
                     break :blk_with .{ .Union = .{
@@ -6841,6 +6843,18 @@ test "builtin: unknown function is allowed (any arity)" {
     defer arena.deinit();
     const st = try parseOneForTest("RETURN myCustomFn(1, 2, 3)", &arena);
     try std.testing.expect(st == .Query);
+}
+
+test "with-union LIMIT accepts $param identically to other set-op arms (QUAL-009)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var lx = Lexer{ .src = "WITH 1 AS n RETURN n UNION WITH 2 AS n RETURN n LIMIT $lim" };
+    var parser = Parser{ .lx = &lx, .arena = &arena, .cur = lx.next() };
+    const program = try parser.parseProgram();
+    try std.testing.expect(program.statements.len >= 1);
+    try std.testing.expect(program.statements[0] == .Union);
+    const lp = program.statements[0].Union.limit_param orelse return error.MissingLimitParam;
+    try std.testing.expectEqualStrings("lim", lp);
 }
 
 // --- ORDER BY restriction policy flags (QUAL-018: now wired with effect) ---
