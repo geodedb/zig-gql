@@ -42,8 +42,9 @@ pub const Lexer = struct {
         } else {
             // Potential Unicode identifier - decode manually to avoid std lib assertions
             const cp = decodeUtf8Codepoint(self.src, self.idx) orelse {
-                // Invalid UTF-8, treat as invalid token
-                self.advance();
+                // Invalid UTF-8: emit a single-byte invalid token. mkTok itself
+                // consumes the byte; calling advance() first would double-advance
+                // and slice past the end at EOF (OOB read — GQL-APPSEC-10).
                 return self.mkTok(.invalid, 1);
             };
             if (t.isIdentifierStart(cp)) return self.scanIdentifierOrKeyword();
@@ -52,8 +53,8 @@ pub const Lexer = struct {
 
         if (self.matchSingle()) |tokv| return tokn(tokv);
 
-        // invalid byte
-        self.advance();
+        // invalid byte: mkTok consumes the one byte (do not advance() first,
+        // which would double-advance and slice past the end at EOF).
         return self.mkTok(.invalid, 1);
     }
 
@@ -257,22 +258,33 @@ pub const Lexer = struct {
         const start = self.idx;
         const loc: t.Location = .{ .line = self.line, .column = self.col };
 
-        // Handle Unicode identifiers - read UTF-8 code points. The iterator
-        // already advances by each codepoint's byte length, so derive the
-        // consumed-byte count from `iter.i` rather than re-decoding the lead
-        // byte's sequence length on every codepoint (PERF-107).
-        var iter = std.unicode.Utf8Iterator{ .bytes = self.src[self.idx..], .i = 0 };
+        // Handle Unicode identifiers via the hardened decoder. We must NOT use
+        // std.unicode.Utf8Iterator here: it does `catch unreachable` and an
+        // unchecked slice on malformed continuation bytes, which an attacker
+        // reaches with a valid identifier-start codepoint followed by an
+        // invalid byte (GQL-APPSEC-10) — an uncatchable SIGSEGV in ReleaseFast.
+        // decodeUtf8Codepoint safely returns null on any malformed/truncated/
+        // overlong/surrogate sequence, which simply ends the identifier here.
+        // It only returns non-null when all `len` bytes are present and valid,
+        // so the lead-byte length below cannot overrun the source.
         var first = true;
-        var consumed: usize = 0;
-
-        while (iter.nextCodepoint()) |cp| {
+        while (self.idx < self.src.len) {
+            const cp = decodeUtf8Codepoint(self.src, self.idx) orelse break;
             const ok = if (first) t.isIdentifierStart(cp) else t.isIdentifierContinue(cp);
             if (!ok) break;
             first = false;
-            consumed = iter.i; // bytes confirmed as part of the identifier so far
+            const b0 = self.src[self.idx];
+            const cp_len: usize = if (b0 < 0x80)
+                1
+            else if (b0 & 0xE0 == 0xC0)
+                2
+            else if (b0 & 0xF0 == 0xE0)
+                3
+            else
+                4;
+            self.idx += cp_len;
             self.col += 1;
         }
-        self.idx += consumed;
         const slice = self.src[start..self.idx];
         // case-insensitive keyword mapping
         const kind = t.keywordKind(slice);
@@ -709,4 +721,28 @@ test "lexer - non-ASCII identifier after LOCAL falls back to LOCAL keyword" {
     // The next token starts exactly at the 'c' of café (no mid-codepoint skew).
     const tok2 = lx.next();
     try std.testing.expectEqualStrings("café", tok2.lexeme);
+}
+
+test "lexer - malformed UTF-8 continuation after identifier-start does not crash (GQL-APPSEC-10)" {
+    // An identifier-start codepoint followed by malformed UTF-8 must not reach
+    // std.unicode.Utf8Iterator's `catch unreachable` / unchecked slice. The
+    // lexer must terminate (reach eof) without crashing under ReleaseSafe.
+    const cases = [_][]const u8{
+        &[_]u8{ 0xC3, 0xA9, 0x80 }, // 'é' + bare continuation byte
+        &[_]u8{ 0xC3, 0xA9, 0xE4 }, // 'é' + truncated 3-byte lead at EOF
+        &[_]u8{ 0xC3, 0xA9, 0xC3, 0x28 }, // 'é' + bad continuation
+        "R\xc3\xa9\x80", // keyword-ish prefix then 'é' + bad byte
+        "RETURN \xc3\xa9\xff", // realistic query fragment
+        &[_]u8{ 0xC3, 0xA9, 0xFF }, // 'é' + invalid lead 0xFF
+    };
+    for (cases) |src| {
+        var lx = Lexer{ .src = src };
+        var guard: usize = 0;
+        while (guard < 100_000) : (guard += 1) {
+            const tk = lx.next();
+            if (tk.kind == .eof) break;
+        }
+        // Reaching here without a crash is the assertion.
+        try std.testing.expect(guard < 100_000);
+    }
 }
