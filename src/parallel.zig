@@ -56,7 +56,17 @@ const MAX_CHUNKS: usize = 64;
 // Global Thread Pool (lazy-initialized, mutex-guarded)
 // ============================================================================
 
-var pool_mutex: std.Thread.Mutex = .{};
+// Zig 0.16 removed `std.Thread.Mutex`; its zero-arg lock/unlock shape now
+// lives behind `std.Io`. The thread_pool dependency already ships a
+// drop-in `sync.Mutex` that restores the zero-arg API on top of the Io
+// primitives, so reuse it when the pool is compiled in. When disabled the
+// guard is never reached (getPool/deinitPool early-return), so a no-op stub
+// keeps the unconditional module-scope declaration valid.
+const PoolMutex = if (build_options.enable_tp) tp.sync.Mutex else struct {
+    pub fn lock(_: *@This()) void {}
+    pub fn unlock(_: *@This()) void {}
+};
+var pool_mutex: PoolMutex = .{};
 var global_pool: if (build_options.enable_tp) ?tp.ThreadPool else void =
     if (build_options.enable_tp) null else {};
 
@@ -152,13 +162,22 @@ pub fn parallelProcessStatements(
     }
 
     var wg = pool.waitGroup();
-    pool.submitBatch(batch[0..actual_chunks], .{ .wait_group = &wg }) catch {
+    const submit = pool.submitBatch(batch[0..actual_chunks], .{ .wait_group = &wg }) catch {
         // Sequential fallback on submit error.
         for (statements, 0..) |s, i| {
             results[i] = processFn(s);
         }
         return;
     };
+    // Backpressure (the default `.return_error` policy) can leave the tail of
+    // the batch un-queued; run those chunks inline so no statement is skipped.
+    var ci: usize = submit.submitted;
+    while (ci < actual_chunks) : (ci += 1) {
+        const c = chunks[ci];
+        for (c.statements, 0..) |s, i| {
+            c.results[i] = processFn(s);
+        }
+    }
     wg.wait();
 }
 
@@ -220,7 +239,7 @@ pub fn parallelCount(
     }
 
     var wg = pool.waitGroup();
-    pool.submitBatch(batch[0..actual_chunks], .{ .wait_group = &wg }) catch {
+    const submit = pool.submitBatch(batch[0..actual_chunks], .{ .wait_group = &wg }) catch {
         // Sequential fallback on submit error.
         var count: usize = 0;
         for (items) |item| {
@@ -228,6 +247,15 @@ pub fn parallelCount(
         }
         return count;
     };
+    // Run any un-queued tail chunks inline (see parallelProcessStatements).
+    var ci: usize = submit.submitted;
+    while (ci < actual_chunks) : (ci += 1) {
+        var cnt: usize = 0;
+        for (chunks[ci].items) |item| {
+            if (predicate(item)) cnt += 1;
+        }
+        chunks[ci].count = cnt;
+    }
     wg.wait();
 
     var total: usize = 0;
@@ -296,7 +324,7 @@ pub fn parallelValidateStatements(
     }
 
     var wg = pool.waitGroup();
-    pool.submitBatch(batch[0..actual_chunks], .{ .wait_group = &wg }) catch {
+    const submit = pool.submitBatch(batch[0..actual_chunks], .{ .wait_group = &wg }) catch {
         // Sequential fallback on submit error.
         var count: usize = 0;
         for (statements) |s| {
@@ -304,6 +332,15 @@ pub fn parallelValidateStatements(
         }
         return count;
     };
+    // Run any un-queued tail chunks inline (see parallelProcessStatements).
+    var ci: usize = submit.submitted;
+    while (ci < actual_chunks) : (ci += 1) {
+        var cnt: usize = 0;
+        for (chunks[ci].statements) |s| {
+            if (validateFn(s)) cnt += 1;
+        }
+        chunks[ci].count = cnt;
+    }
     wg.wait();
 
     var total: usize = 0;
@@ -461,4 +498,67 @@ test "deinitPool is safe when pool never initialized" {
     // Note: we cannot easily test this because the global pool may already
     // be initialized by other tests. Just verify no crash.
     deinitPool();
+}
+
+// The following tests use input sizes above the fork thresholds so they
+// exercise the real parallel-dispatch path (submitBatch + chunked work +
+// inline tail handling) under -Dthread_pool=true, and the sequential path
+// otherwise. Both must produce identical, correct results.
+
+test "parallelValidateStatements parallel path correctness" {
+    const allocator = std.testing.allocator;
+    // 200 statements: Commit at even indices, Rollback at odd → 100 Commits.
+    const stmts = try allocator.alloc(ast.Statement, 200);
+    defer allocator.free(stmts);
+    for (stmts, 0..) |*s, i| s.* = if (i % 2 == 0) .Commit else .Rollback;
+
+    const count = parallelValidateStatements(stmts, struct {
+        fn isCommit(s: ast.Statement) bool {
+            return s == .Commit;
+        }
+    }.isCommit);
+    try std.testing.expectEqual(@as(usize, 100), count);
+
+    if (build_options.enable_tp) deinitPool();
+}
+
+test "parallelProcessStatements parallel path correctness" {
+    const allocator = std.testing.allocator;
+    const stmts = try allocator.alloc(ast.Statement, 256);
+    defer allocator.free(stmts);
+    for (stmts, 0..) |*s, i| s.* = if (i % 3 == 0) .Commit else .Rollback;
+
+    const results = try allocator.alloc(bool, 256);
+    defer allocator.free(results);
+
+    parallelProcessStatements(bool, stmts, results, struct {
+        fn isCommit(s: ast.Statement) bool {
+            return s == .Commit;
+        }
+    }.isCommit);
+
+    var commits: usize = 0;
+    for (results, 0..) |r, i| {
+        try std.testing.expectEqual(i % 3 == 0, r);
+        if (r) commits += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 86), commits); // ceil(256/3)
+
+    if (build_options.enable_tp) deinitPool();
+}
+
+test "parallelCount parallel path correctness" {
+    const allocator = std.testing.allocator;
+    const items = try allocator.alloc(i32, 500);
+    defer allocator.free(items);
+    for (items, 0..) |*x, i| x.* = @intCast(i);
+
+    const evens = parallelCount(i32, items, struct {
+        fn isEven(x: i32) bool {
+            return @mod(x, 2) == 0;
+        }
+    }.isEven);
+    try std.testing.expectEqual(@as(usize, 250), evens);
+
+    if (build_options.enable_tp) deinitPool();
 }
