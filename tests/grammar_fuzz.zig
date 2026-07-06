@@ -50,10 +50,14 @@ fn getGrammar(a: std.mem.Allocator) !*ebnf.bnf.Grammar {
 /// a bounded arena. Never returns an error for a parse rejection — only a
 /// crash/panic/leak would fail this.
 fn fuzzGrammarBytes(input: []const u8) anyerror!void {
+    if (comptime has_smith) @disableInstrumentation();
     const g = try getGrammar(std.heap.page_allocator);
 
-    var gen_buf: [1 << 20]u8 = undefined;
-    var gen_fba = std.heap.FixedBufferAllocator.init(&gen_buf);
+    // Bound memory (heap-allocated so we do not add a large stack frame on top
+    // of grammar derivation). The generator must return an error, not OOM-crash.
+    const gen_backing = std.heap.page_allocator.alloc(u8, 1 * 1024 * 1024) catch return;
+    defer std.heap.page_allocator.free(gen_backing);
+    var gen_fba = std.heap.FixedBufferAllocator.init(gen_backing);
     var cs = ebnf.bnf.gen.ChoiceSource{ .bytes = .{ .data = input } };
     const sentence = ebnf.bnf.gen.generate(gen_fba.allocator(), g, .{
         .start = "GQL-program",
@@ -61,10 +65,11 @@ fn fuzzGrammarBytes(input: []const u8) anyerror!void {
         .max_len = 1 << 16,
     }, &cs) catch return; // generation OOM/NoFiniteDerivation is not a parser bug
 
-    // Bounded parse arena mirrors src/parser.zig's fuzzParseOne hardening:
-    // adversarial derivations must error, never OOM-crash the fuzzer.
-    var parse_buf: [2 << 20]u8 = undefined;
-    var parse_fba = std.heap.FixedBufferAllocator.init(&parse_buf);
+    // Bound memory (heap-allocated so we do not add a large stack frame on top
+    // of parser recursion). The parser must return an error, not OOM-crash.
+    const parse_backing = std.heap.page_allocator.alloc(u8, 2 * 1024 * 1024) catch return;
+    defer std.heap.page_allocator.free(parse_backing);
+    var parse_fba = std.heap.FixedBufferAllocator.init(parse_backing);
     var arena = std.heap.ArenaAllocator.init(parse_fba.allocator());
     defer arena.deinit();
     var lx = gql.Lexer{ .src = sentence };
@@ -93,6 +98,7 @@ fn fuzzGrammarBytes(input: []const u8) anyerror!void {
 const has_smith = @hasDecl(std.testing, "Smith");
 
 fn fuzzGrammarOne(context: void, in: if (has_smith) *std.testing.Smith else []const u8) anyerror!void {
+    if (comptime has_smith) @disableInstrumentation();
     _ = context;
     const input: []const u8 = if (comptime has_smith) blk: {
         // 0.16.0 path (CI): ask Smith for a byte string and feed it through
