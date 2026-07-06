@@ -134,7 +134,11 @@ dev: fmt check test-unit
 	@echo "✅ Development checks passed"
 
 # Full CI pipeline (clean slate)
-ci: clean build test
+# `grammar-check-upstream` is deliberately NOT included: it requires network
+# access to the ISO standards site and depends on upstream artifact
+# availability, neither of which should gate a merge. It stays a
+# manual/scheduled check (see `make grammar-check-upstream`).
+ci: clean build test test-grammar
 	@echo "✅ CI pipeline passed"
 
 # Release optimization level tests
@@ -176,7 +180,7 @@ help:
 	@echo "  all                  Build and run tests (default)"
 	@echo "  build                Build the library"
 	@echo "  dev                  Quick iteration: fmt + check + test"
-	@echo "  ci                   Full CI: clean + build + test"
+	@echo "  ci                   Full CI: clean + build + test + grammar"
 	@echo ""
 	@echo "Testing:"
 	@echo "  test                 Run all tests"

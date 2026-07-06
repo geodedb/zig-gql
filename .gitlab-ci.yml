@@ -77,6 +77,31 @@ stages:
   - export PATH="$PWD/zig-${ZIG_VERSION}:$PATH"
   - zig version
 
+# Pre-populate the zig package cache with the private `ebnf` dependency.
+#
+# WHY: `build.zig`'s "test" step (see `test_step.dependOn(&run_gf.step)`)
+# and its "test-grammar" step both reach `b.lazyDependency("ebnf", ...)`
+# (grammar/ + tests/grammar_test.zig + tests/grammar_fuzz.zig, added in
+# B2/B6). Unlike the public `otel`/`thread-pool` deps, `ebnf` is a PRIVATE
+# GitLab project (gitlab.com/devnw/zig/ebnf) -- an anonymous HTTPS GET
+# against it 302-redirects to a sign-in page, so `zig build` cannot resolve
+# the dependency over the network with no credentials. Any job whose
+# `zig build` invocation reaches the "test" or "test-grammar" step therefore
+# needs this preamble.
+#
+# HOW: clone the tagged ref with the job's own CI_JOB_TOKEN (works because
+# the ebnf project's CI/CD job-token inbound allowlist includes this
+# project -- see docs/GRAMMAR_VERIFICATION.md's "CI prerequisite" section),
+# then run `zig fetch` against the local clone. `zig fetch` stores the
+# package in the global cache keyed by content hash
+# (`ebnf-0.2.0-rCUW9Ah1AwAeuKDC2zyXzJ6nVGJZaUFkATjpyAKQLgzI`, matching
+# build.zig.zon), so the subsequent `zig build` step resolves it from cache
+# with no further network access -- it does not matter that the clone URL
+# differs from the git+https URL in build.zig.zon.
+.fetch-ebnf: &fetch-ebnf
+  - git clone --depth 1 --branch v0.2.0 "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.com/devnw/zig/ebnf.git" /tmp/ebnf-dep
+  - zig fetch /tmp/ebnf-dep
+
 # Override zig-format component to use the project's ZIG_VERSION.
 # The v1.2.1 component defaults to 0.14.0 and does not accept a version input.
 zig-format:
@@ -93,11 +118,15 @@ build:
     - zig build check
 
 # Unit tests
+# `zig build test` reaches the grammar-fuzz test artifact (tests/grammar_fuzz.zig,
+# see build.zig's `test_step.dependOn(&run_gf.step)`), which needs the
+# private `ebnf` dependency -- hence *fetch-ebnf.
 test:
   stage: test
   image: debian:bookworm-slim
   before_script:
     - *install-zig
+    - *fetch-ebnf
   script:
     - zig build test --summary all
   needs:
@@ -115,11 +144,13 @@ test-integration:
     - build
 
 # Release optimization tests
+# Same "test" step as above (different -Doptimize), so it also needs *fetch-ebnf.
 test-release-safe:
   stage: test
   image: debian:bookworm-slim
   before_script:
     - *install-zig
+    - *fetch-ebnf
   script:
     - zig build test -Doptimize=ReleaseSafe --summary all
   needs:
@@ -131,6 +162,7 @@ test-release-fast:
   image: debian:bookworm-slim
   before_script:
     - *install-zig
+    - *fetch-ebnf
   script:
     - zig build test -Doptimize=ReleaseFast --summary all
   needs:
@@ -157,13 +189,30 @@ test-integration-release-fast:
     - build
 
 # ReleaseSmall tests
+# Same "test" step as above (different -Doptimize), so it also needs *fetch-ebnf.
 test-release-small:
   stage: test
   image: debian:bookworm-slim
   before_script:
     - *install-zig
+    - *fetch-ebnf
   script:
     - zig build test -Doptimize=ReleaseSmall --summary all
+  needs:
+    - build
+
+# Grammar verification tests (ISO/IEC 39075 BNF conformance: smoke, geode
+# merge-validate, keyword drift, conformance corpus, generation ratchet, plus
+# the grammar-guided fuzz smoke loop -- see docs/GRAMMAR_VERIFICATION.md).
+# Needs *fetch-ebnf for the same reason as the `test` job above.
+grammar-verify:
+  stage: test
+  image: debian:bookworm-slim
+  before_script:
+    - *install-zig
+    - *fetch-ebnf
+  script:
+    - zig build test-grammar --summary all
   needs:
     - build
 
@@ -174,11 +223,14 @@ test-release-small:
 #   rc=0  : fuzzer stopped cleanly before timeout (no crash)
 #   rc=124: timeout reached (expected in CI) - pass
 #   other : fuzzer found a crash - fail the job
+# `zig build test --fuzz` also compiles/runs the grammar-fuzz test artifact
+# (tests/grammar_fuzz.zig), same as the `test` job above -- needs *fetch-ebnf.
 fuzz:
   stage: fuzz
   image: debian:bookworm-slim
   before_script:
     - *install-zig
+    - *fetch-ebnf
   script:
     - timeout 60 zig build test --fuzz; rc=$?; if [ $rc -ne 0 ] && [ $rc -ne 124 ]; then exit $rc; fi
   artifacts:
