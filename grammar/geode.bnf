@@ -1,2 +1,193 @@
-<geode program> ::=
+****************************************************************
+Geode extension grammar for ISO/IEC 39075 GQL.
+
+Supplementary productions layered over the vendored ISO artifact
+(grammar/ISO_IEC_39075.bnf.txt), parsed and merged by
+tests/grammar_test.zig ("geode extension grammar parses and merges
+cleanly over ISO grammar"). Productions here may reference ISO
+nonterminals and may redefine ISO productions to add alternatives —
+per ebnf's Grammar.mergeFrom, a redefinition REPLACES the ISO
+production entirely, so every redefinition below restates the
+original ISO alternatives verbatim and appends the Geode addition.
+
+NOTE ON NOTATION: only text ABOVE the first `<name> ::=` header is
+ignored by ebnf's bnf.parse — text between two productions is parsed
+as trailing content of the PRECEDING production, so this file carries
+no free-standing prose between rules. Rationale and source citations
+live in `!!` lines inside each production body instead, and the full
+narrative survey lives in .superpowers/sdd/task-B3-report.md.
+
+Extensions covered (verified against src/{token,ast,parser,
+language_metadata}.zig on branch feat/grammar-verification):
+  1. Top-level SCAN and CREATE CONSTRAINT statement forms (ASSERT/SCAN
+     keywords, .geode_extension in language_metadata.zig).
+  2. `@` field annotations + PRIMARY KEY in CREATE GRAPH TYPE field
+     definitions (Field-Level Encryption extension).
+  3. VECTOR / UUID / JSON predefined types (.geode_extension types).
+  4. `^` circumflex power operator (token.zig `caret`).
+  5. Geode scalar/vector/graph functions (.geode_extension functions) —
+     call-syntax-only notes; no new production needed.
+  6. Parser-flag-gated extension functions found while auditing
+     src/parser.zig:26-48 (ts_extensions) that have no
+     language_metadata.zig entry at all — flagged as a documentation
+     gap rather than silently dropped.
+****************************************************************
+
+<geode GQL-program> ::=
     <GQL-program>
+
+<statement> ::=
+    !! Redefines ISO_IEC_39075.bnf.txt:143-146 <statement>, restating its
+    !! 3 original alternatives and appending the 2 Geode statement forms.
+    <linear catalog-modifying statement>
+  | <linear data-modifying statement>
+  | <composite query statement>
+  | <geode scan statement>
+  | <geode create constraint statement>
+
+<geode scan statement> ::=
+    !! src/parser.zig:759-768 (`.SCAN => blk_scan: ...`). SCAN keyword is
+    !! .geode_extension in src/language_metadata.zig:220.
+    SCAN [ { VALUE | VALUES } ]
+
+<geode create constraint statement> ::=
+    !! src/parser.zig:5104-5196 (`parseCreateConstraint`). CREATE
+    !! CONSTRAINT is entirely absent from the ISO artifact (only the bare
+    !! pre-reserved word CONSTRAINT appears, ISO_IEC_39075.bnf.txt:2982).
+    !! ASSERT is .geode_extension in src/language_metadata.zig:99.
+    CREATE CONSTRAINT [ IF NOT EXISTS ] <identifier>
+        { <geode constraint iso clause>
+        | <geode constraint legacy clause> }
+
+<geode constraint iso clause> ::=
+    !! src/parser.zig:5133-5162, 5199-5281 (`parseConstraintCondition`,
+    !! the ISO-flavored `FOR (n:Label) REQUIRE ...` form).
+    FOR <left paren> <identifier> <colon> <identifier> <right paren>
+        REQUIRE <geode constraint requirement>
+
+<geode constraint requirement> ::=
+    <left paren> <geode property name list> <right paren> IS NODE KEY
+  | <geode property reference> IS NOT NULL
+  | <geode property reference> IS UNIQUE
+
+<geode constraint legacy clause> ::=
+    !! src/parser.zig:5164-5186, 5283-5355 (legacy `ON :Label ASSERT ...`
+    !! form, `parseConstraintConditionLegacy`).
+    ON [ <colon> ] <identifier> ASSERT <geode constraint legacy requirement>
+
+<geode constraint legacy requirement> ::=
+    EXISTS <left paren> <identifier> <right paren>
+  | <left paren> <geode property name list> <right paren> IS { NODE KEY | UNIQUE }
+  | <identifier> IS UNIQUE
+
+<geode property reference> ::=
+    <identifier> [ <period> <identifier> ]
+
+<geode property name list> ::=
+    <identifier> [ { <comma> <identifier> }... ]
+
+<property type> ::=
+    !! Field-Level Encryption extension. Redefines
+    !! ISO_IEC_39075.bnf.txt:1313-1314 <property type> to append the
+    !! optional Geode field modifiers; restates the sole original
+    !! alternative unchanged. src/ast.zig:602-636
+    !! (FieldAnnotation/FieldDefinition/CreateGraphTypeStatement, "Geode
+    !! Extension"); src/parser.zig:5885-5985 (`parseFieldDefinitions`).
+    <property name> [ <typed> ] <property value type> [ <geode field modifiers> ]
+
+<geode field definition> ::=
+    <property type>
+
+<geode field modifiers> ::=
+    [ PRIMARY KEY ] [ <geode field annotation>... ]
+
+<geode field annotation> ::=
+    <commercial at> <geode annotation name>
+        [ <left paren> [ <geode annotation argument list> ] <right paren> ]
+
+<geode annotation name> ::=
+    ENCRYPTED
+  | SEARCHABLE
+
+<geode annotation argument list> ::=
+    <geode annotation argument> [ { <comma> <geode annotation argument> }... ]
+
+<geode annotation argument> ::=
+    !! src/parser.zig:5931-5950 skips a balanced paren run verbatim
+    !! without structurally validating its contents; modeled here as an
+    !! optional `name:` label over a general value expression (covers
+    !! the observed `algorithm: 'AES256-GCM'`-style keyword arguments as
+    !! well as bare literals/identifiers).
+    [ <identifier> <colon> ] <value expression>
+
+<predefined type> ::=
+    !! Redefines ISO_IEC_39075.bnf.txt:1331-1338 <predefined type> to
+    !! append <geode predefined type>; restates the 7 original
+    !! alternatives unchanged. VECTOR/UUID/JSON are .geode_extension in
+    !! src/language_metadata.zig:1207-1210.
+    <boolean type>
+  | <character string type>
+  | <byte string type>
+  | <numeric type>
+  | <temporal type>
+  | <reference value type>
+  | <immaterial value type>
+  | <geode predefined type>
+
+<geode predefined type> ::=
+    VECTOR
+  | UUID
+  | JSON
+
+<factor> ::=
+    !! ISO already has POWER(base, exponent) call syntax (<power
+    !! function>, ISO_IEC_39075.bnf.txt:2103-2105) but no infix operator.
+    !! Redefines ISO_IEC_39075.bnf.txt:2004-2005 <factor> to append an
+    !! optional, right-associative power suffix; restates the sole
+    !! original alternative unchanged. src/token.zig:39 (`caret`);
+    !! src/parser.zig:3330-3341 (`parsePowerExpr`, right-associative,
+    !! binds tighter than * and /).
+    [ <sign> ] <numeric primary> [ <geode circumflex> <factor> ]
+
+<geode circumflex> ::=
+    ^
+
+<geode call syntax scalar functions> ::=
+    !! None of the functions noted in this and the next two productions
+    !! introduce new call *syntax* — every one is invoked as an ordinary
+    !! `name ( args )` expression, the same shape already used for ISO
+    !! builtins (COUNT(...), ABS(...), POWER(...,...), etc.) and
+    !! validated semantically (not syntactically) by
+    !! src/parser.zig:4224 (`validateBuiltinCall`) against the registry
+    !! at src/parser.zig:4161-4222. No new production is needed for
+    !! reachability; these notes exist purely to account for every
+    !! `.geode_extension` function entry in src/language_metadata.zig.
+    !! icontains(str, search) — case-insensitive CONTAINS.
+    !! src/language_metadata.zig:741-752.
+
+<geode call syntax vector functions> ::=
+    !! vectorf32(list), vectori32(list), vector_l2(v1, v2),
+    !! vector_cosine(v1, v2), vector_dot(v1, v2), distance(v1, v2),
+    !! similarity(v1, v2), cosine(v1, v2), euclidean(v1, v2),
+    !! manhattan(v1, v2). src/language_metadata.zig:969-1083.
+
+<geode call syntax graph functions> ::=
+    !! indegree(node), outdegree(node) — graph degree functions.
+    !! src/language_metadata.zig:1159-1177.
+
+<geode ts extension functions note> ::=
+    !! Found while auditing src/parser.zig:26-48 for extension-gating
+    !! parser flags per the task brief. last_value, value_at, sample_by,
+    !! interpolate, moving_avg, rate, derivative, time_bucket —
+    !! time-series builtins gated by Parser.ts_extensions
+    !! (src/parser.zig:38, enforced at src/parser.zig:4181-4189).
+    !! Undocumented in language_metadata.zig (documentation gap,
+    !! flagged rather than silently dropped). Call-syntax-only; no new
+    !! production needed.
+
+<geode undocumented builtins note> ::=
+    !! lat_lon(...), lat_lon_alt(...), geo_point(...), jsonb(...),
+    !! geometry_from_text(...) — present in src/parser.zig's Builtin
+    !! enum (src/parser.zig:4161-4190) but absent from
+    !! language_metadata.zig. Call-syntax-only; no new production
+    !! needed.

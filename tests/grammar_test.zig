@@ -15,3 +15,19 @@ test "iso grammar parses, validates, and exposes expected productions" {
         try std.testing.expect(g.find(name) != null);
     }
 }
+
+const geode_src = @embedFile("geode_bnf");
+
+test "geode extension grammar parses and merges cleanly over ISO grammar" {
+    const a = std.testing.allocator;
+    var iso = try ebnf.bnf.parse(a, iso_src);
+    defer iso.deinit();
+    var geo = try ebnf.bnf.parse(a, geode_src);
+    defer geo.deinit();
+    // Extension productions may reference ISO nonterminals, so geode.bnf alone
+    // is NOT expected to validate — the merged grammar must.
+    try iso.mergeFrom(a, &geo);
+    try iso.validate(a);
+    try std.testing.expect(iso.find("geode GQL-program") != null);
+    try std.testing.expect(iso.find("geode field annotation") != null);
+}
