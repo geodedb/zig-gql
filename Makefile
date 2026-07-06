@@ -2,10 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2025 CodePros
 
-.PHONY: all build test test-unit test-integration clean check fmt help dev ci
+.PHONY: all build test test-unit test-integration clean check grammar-fetch grammar-check-upstream fmt help dev ci
 .PHONY: test-release-safe test-release-fast test-release-small test-all-optimizations
 .PHONY: pre-commit-install pre-commit pre-commit-run
 .PHONY: bench scale-bench bench-save bench-compare bench-baseline
+
+# Grammar artifact URLs and paths
+GRAMMAR_URL := https://standards.iso.org/iso-iec/39075/ed-1/en/ISO_IEC_39075(en).bnf.txt
+GRAMMAR_FILE := grammar/ISO_IEC_39075.bnf.txt
 
 # Default target: build and run tests
 all: build test-unit
@@ -67,6 +71,17 @@ clean:
 check:
 	@echo "🔍 Checking for compilation errors..."
 	@zig build check
+
+# Download the ISO/IEC 39075 BNF grammar artifact into grammar/
+grammar-fetch:
+	curl -fsSL '$(GRAMMAR_URL)' -o $(GRAMMAR_FILE)
+	@echo "fetched $$(wc -l < $(GRAMMAR_FILE)) lines into $(GRAMMAR_FILE)"
+
+# Verify the vendored ISO grammar matches the upstream artifact
+grammar-check-upstream:
+	@tmp=$$(mktemp); curl -fsSL '$(GRAMMAR_URL)' -o $$tmp && \
+	  diff -u $(GRAMMAR_FILE) $$tmp && echo "vendored grammar matches upstream" ; \
+	  rc=$$?; rm -f $$tmp; exit $$rc
 
 # Format source code
 fmt:
@@ -143,6 +158,10 @@ help:
 	@echo "  check                Check for compilation errors"
 	@echo "  pre-commit           Run pre-commit hooks"
 	@echo "  pre-commit-install   Install pre-commit hooks"
+	@echo ""
+	@echo "Grammar:"
+	@echo "  grammar-fetch        Download the ISO/IEC 39075 BNF grammar artifact"
+	@echo "  grammar-check-upstream  Verify vendored grammar matches upstream"
 	@echo ""
 	@echo "Maintenance:"
 	@echo "  clean                Remove build artifacts"
