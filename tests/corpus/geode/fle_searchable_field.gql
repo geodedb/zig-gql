@@ -1,0 +1,5 @@
+-- expect: ok
+CREATE GRAPH TYPE indexed_type AS {
+    id VECTOR PRIMARY KEY,
+    email TEXT @searchable
+}

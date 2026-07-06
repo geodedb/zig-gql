@@ -1,0 +1,2 @@
+-- expect: ok
+MATCH (n) SET n.name = 'Bob' RETURN n

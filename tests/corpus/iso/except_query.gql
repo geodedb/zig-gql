@@ -1,0 +1,4 @@
+-- expect: ok
+MATCH (a:Person) RETURN a.name
+EXCEPT
+MATCH (b:Person) RETURN b.name

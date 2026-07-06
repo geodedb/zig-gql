@@ -1,0 +1,5 @@
+-- expect: ok
+MERGE (n:Person {id: 1})
+ON CREATE SET n.created = TRUE
+ON MATCH SET n.seen = TRUE
+RETURN n

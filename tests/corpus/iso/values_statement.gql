@@ -1,0 +1,3 @@
+-- expect: ok
+VALUES (1, 'a'), (2, 'b') AS (id, label)
+RETURN id, label

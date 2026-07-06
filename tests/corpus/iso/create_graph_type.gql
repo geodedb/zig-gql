@@ -1,0 +1,5 @@
+-- expect: ok
+CREATE GRAPH TYPE my_type AS {
+    name TEXT,
+    age INT
+}

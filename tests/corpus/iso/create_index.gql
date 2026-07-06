@@ -1,0 +1,2 @@
+-- expect: ok
+CREATE INDEX FOR (n:Person) ON (n.name)

@@ -1,0 +1,2 @@
+-- expect: ok
+RETURN 2 ^ 10 AS result

@@ -311,6 +311,7 @@ pub fn build(b: *std.Build) void {
         gt.root_module.addAnonymousImport("iso_bnf", .{ .root_source_file = b.path("grammar/ISO_IEC_39075.bnf.txt") });
         gt.root_module.addAnonymousImport("geode_bnf", .{ .root_source_file = b.path("grammar/geode.bnf") });
         gt.root_module.addAnonymousImport("unimplemented_kw", .{ .root_source_file = b.path("grammar/unimplemented_iso_keywords.txt") });
+        gt.root_module.addAnonymousImport("gen_ratchet", .{ .root_source_file = b.path("grammar/generation_ratchet.txt") });
         grammar_step.dependOn(&b.addRunArtifact(gt).step);
     }
 
