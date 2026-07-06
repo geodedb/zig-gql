@@ -313,6 +313,34 @@ pub fn build(b: *std.Build) void {
         gt.root_module.addAnonymousImport("unimplemented_kw", .{ .root_source_file = b.path("grammar/unimplemented_iso_keywords.txt") });
         gt.root_module.addAnonymousImport("gen_ratchet", .{ .root_source_file = b.path("grammar/generation_ratchet.txt") });
         grammar_step.dependOn(&b.addRunArtifact(gt).step);
+
+        // Grammar-guided fuzz test (B6). Fuzz bytes drive the grammar's
+        // derivation choices (ebnf.bnf.gen.ChoiceSource.bytes); the derived
+        // GQL-program sentence is then lexed/parsed to check the
+        // never-crash property. Registered into BOTH steps from ONE
+        // compiled test binary:
+        //   - `test_step`, so `zig build test --fuzz` (CI's coverage-guided
+        //     fuzz job) reaches it exactly like the Smith-based
+        //     `fuzzParseOne` fuzz test in src/root.zig's module already does;
+        //   - `grammar_step`, so plain `zig build test-grammar` runs the
+        //     fuzz body's single non-fuzz-mode invocation (empty input,
+        //     i.e. the minimal derivation) plus the deterministic 200-seed
+        //     smoke loop, as an always-on local check that does not require
+        //     `--fuzz` or a 0.16-only std.testing.fuzz API.
+        const gf = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("tests/grammar_fuzz.zig"),
+                .target = target,
+                .optimize = optimize,
+            }),
+        });
+        gf.root_module.addImport("ebnf", ebnf_dep.module("ebnf"));
+        gf.root_module.addImport("gql", module);
+        gf.root_module.addAnonymousImport("iso_bnf", .{ .root_source_file = b.path("grammar/ISO_IEC_39075.bnf.txt") });
+        gf.root_module.addAnonymousImport("geode_bnf", .{ .root_source_file = b.path("grammar/geode.bnf") });
+        const run_gf = b.addRunArtifact(gf);
+        test_step.dependOn(&run_gf.step);
+        grammar_step.dependOn(&run_gf.step);
     }
 
     // =========================================================================
