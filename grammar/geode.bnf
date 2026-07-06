@@ -143,10 +143,10 @@ language_metadata}.zig on branch feat/grammar-verification):
     !! ISO already has POWER(base, exponent) call syntax (<power
     !! function>, ISO_IEC_39075.bnf.txt:2103-2105) but no infix operator.
     !! Redefines ISO_IEC_39075.bnf.txt:2004-2005 <factor> to append an
-    !! optional, right-associative power suffix; restates the sole
+    !! optional, left-associative power suffix; restates the sole
     !! original alternative unchanged. src/token.zig:39 (`caret`);
-    !! src/parser.zig:3330-3341 (`parsePowerExpr`, right-associative,
-    !! binds tighter than * and /).
+    !! src/parser.zig:3330-3341 (`parsePowerExpr`, left-associative
+    !! while-loop left-fold (a^b)^c, binds tighter than * and /).
     [ <sign> ] <numeric primary> [ <geode circumflex> <factor> ]
 
 <geode circumflex> ::=
@@ -158,12 +158,14 @@ language_metadata}.zig on branch feat/grammar-verification):
     !! `name ( args )` expression, the same shape already used for ISO
     !! builtins (COUNT(...), ABS(...), POWER(...,...), etc.) and
     !! validated semantically (not syntactically) by
-    !! src/parser.zig:4224 (`validateBuiltinCall`) against the registry
-    !! at src/parser.zig:4161-4222. No new production is needed for
-    !! reachability; these notes exist purely to account for every
-    !! `.geode_extension` function entry in src/language_metadata.zig.
-    !! icontains(str, search) — case-insensitive CONTAINS.
-    !! src/language_metadata.zig:741-752.
+    !! src/parser.zig:4224 (`validateBuiltinCall`). Validation dispatch:
+    !! vectorf32, vectori32 are in the builtin_map (src/parser.zig:4161-4222);
+    !! icontains and all other Geode functions are accepted via the generic
+    !! unknown-function pass-through (src/parser.zig:4231 `orelse return true`).
+    !! No new production is needed for reachability; these notes exist purely
+    !! to account for every `.geode_extension` function entry in
+    !! src/language_metadata.zig. icontains(str, search) — case-insensitive
+    !! CONTAINS. src/language_metadata.zig:741-752.
 
 <geode call syntax vector functions> ::=
     !! vectorf32(list), vectori32(list), vector_l2(v1, v2),
