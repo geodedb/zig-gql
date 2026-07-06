@@ -289,6 +289,30 @@ pub fn build(b: *std.Build) void {
     const run_observability_enabled_tests = b.addRunArtifact(observability_enabled_tests);
     test_step.dependOn(&run_observability_enabled_tests.step);
 
+    // ========================================================================
+    // Grammar verification (ebnf) — gated dependency + smoke test
+    // ========================================================================
+
+    // Grammar smoke test. Parses the vendored ISO/IEC 39075 BNF artifact
+    // with the `ebnf` package and validates it. Lazy: only fetched when
+    // this step is actually invoked (`zig build test-grammar`), matching
+    // the `otel` pattern above.
+    const grammar_step = b.step("test-grammar", "Run grammar verification tests");
+    if (b.lazyDependency("ebnf", .{ .target = target, .optimize = optimize })) |ebnf_dep| {
+        const gt = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("tests/grammar_test.zig"),
+                .target = target,
+                .optimize = optimize,
+            }),
+        });
+        gt.root_module.addImport("ebnf", ebnf_dep.module("ebnf"));
+        gt.root_module.addImport("gql", module);
+        gt.root_module.addAnonymousImport("iso_bnf", .{ .root_source_file = b.path("grammar/ISO_IEC_39075.bnf.txt") });
+        gt.root_module.addAnonymousImport("geode_bnf", .{ .root_source_file = b.path("grammar/geode.bnf") });
+        grammar_step.dependOn(&b.addRunArtifact(gt).step);
+    }
+
     // =========================================================================
     // Benchmarks
     // =========================================================================

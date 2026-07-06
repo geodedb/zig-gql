@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2025 CodePros
 
-.PHONY: all build test test-unit test-integration clean check grammar-fetch grammar-check-upstream fmt help dev ci
+.PHONY: all build test test-unit test-integration clean check grammar-fetch grammar-check-upstream test-grammar fmt help dev ci
 .PHONY: test-release-safe test-release-fast test-release-small test-all-optimizations
 .PHONY: pre-commit-install pre-commit pre-commit-run
 .PHONY: bench scale-bench bench-save bench-compare bench-baseline
@@ -83,6 +83,11 @@ grammar-check-upstream:
 	  diff -u $(GRAMMAR_FILE) $$tmp && echo "vendored grammar matches upstream" ; \
 	  rc=$$?; rm -f $$tmp; exit $$rc
 
+# Run grammar verification tests
+test-grammar:
+	@echo "📜 Running grammar verification tests..."
+	@zig build test-grammar --summary all
+
 # Format source code
 fmt:
 	@echo "📝 Formatting code..."
@@ -162,6 +167,7 @@ help:
 	@echo "Grammar:"
 	@echo "  grammar-fetch        Download the ISO/IEC 39075 BNF grammar artifact"
 	@echo "  grammar-check-upstream  Verify vendored grammar matches upstream"
+	@echo "  test-grammar         Run grammar verification tests"
 	@echo ""
 	@echo "Maintenance:"
 	@echo "  clean                Remove build artifacts"
