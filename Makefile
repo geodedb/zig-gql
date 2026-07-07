@@ -84,9 +84,12 @@ grammar-check-upstream:
 	  rc=$$?; rm -f $$tmp; exit $$rc
 
 # Run grammar verification tests
+# -Dgrammar=true is required: the ebnf dependency (and every grammar/
+# grammar-fuzz compile step) lives behind that flag in build.zig so it stays
+# truly lazy -- without the flag `zig build test-grammar` is a no-op.
 test-grammar:
 	@echo "📜 Running grammar verification tests..."
-	@zig build test-grammar --summary all
+	@zig build test-grammar -Dgrammar=true --summary all
 
 # Run grammar-guided fuzzing (time-boxed 60s, rc 124 = clean timeout).
 #
@@ -122,7 +125,7 @@ test-grammar:
 # approximation of CI's coverage-guided run, not a required-green gate.
 grammar-fuzz:
 	@echo "🧬 Running grammar-guided fuzzing (60s, local: test-grammar step)..."
-	timeout 60 zig build test-grammar --fuzz; rc=$$?; [ $$rc -eq 124 ] && exit 0 || exit $$rc
+	timeout 60 zig build test-grammar -Dgrammar=true --fuzz; rc=$$?; [ $$rc -eq 124 ] && exit 0 || exit $$rc
 
 # Format source code
 fmt:

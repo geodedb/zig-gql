@@ -60,6 +60,21 @@ pub fn build(b: *std.Build) void {
         "Forward to upstream otel: DevNW gRPC",
     ) orelse false;
 
+    // -Dgrammar: compile and run the ISO/IEC 39075 grammar-verification
+    // suite (smoke test + grammar-guided fuzz). OFF by default. An
+    // unguarded `b.lazyDependency("ebnf", ...)` call is NOT sufficient to
+    // keep the dependency lazy: Zig evaluates build.zig in full for every
+    // invocation of `zig build <anything>`, so an unconditional call marks
+    // the (private) `ebnf` package for fetching on every build regardless
+    // of which step was requested. Gating the call itself behind this flag
+    // -- mirroring the `with_otel` pattern above -- is what keeps `ebnf`
+    // truly lazy: it is only resolved when `-Dgrammar=true` is passed.
+    const with_grammar = b.option(
+        bool,
+        "grammar",
+        "Enable grammar verification steps (fetches the private ebnf dependency)",
+    ) orelse false;
+
     // Build options module — materialise ONE shared `build_options`
     // module so every consumer (lib, observability seam, tests) imports
     // the SAME instance. Without the shared instance Zig 0.16 may emit
@@ -294,53 +309,62 @@ pub fn build(b: *std.Build) void {
     // ========================================================================
 
     // Grammar smoke test. Parses the vendored ISO/IEC 39075 BNF artifact
-    // with the `ebnf` package and validates it. Lazy: only fetched when
-    // this step is actually invoked (`zig build test-grammar`), matching
-    // the `otel` pattern above.
-    const grammar_step = b.step("test-grammar", "Run grammar verification tests");
-    if (b.lazyDependency("ebnf", .{ .target = target, .optimize = optimize })) |ebnf_dep| {
-        const gt = b.addTest(.{
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("tests/grammar_test.zig"),
-                .target = target,
-                .optimize = optimize,
-            }),
-        });
-        gt.root_module.addImport("ebnf", ebnf_dep.module("ebnf"));
-        gt.root_module.addImport("gql", module);
-        gt.root_module.addAnonymousImport("iso_bnf", .{ .root_source_file = b.path("grammar/ISO_IEC_39075.bnf.txt") });
-        gt.root_module.addAnonymousImport("geode_bnf", .{ .root_source_file = b.path("grammar/geode.bnf") });
-        gt.root_module.addAnonymousImport("unimplemented_kw", .{ .root_source_file = b.path("grammar/unimplemented_iso_keywords.txt") });
-        gt.root_module.addAnonymousImport("gen_ratchet", .{ .root_source_file = b.path("grammar/generation_ratchet.txt") });
-        grammar_step.dependOn(&b.addRunArtifact(gt).step);
+    // with the `ebnf` package and validates it. The step is always
+    // registered so `zig build test-grammar` resolves without
+    // `-Dgrammar=true`; without the flag it is simply empty (a documented
+    // no-op -- see docs/GRAMMAR_VERIFICATION.md). The private `ebnf`
+    // dependency, and every grammar/grammar-fuzz compile step, live INSIDE
+    // the `if (with_grammar)` block below so `b.lazyDependency("ebnf", ...)`
+    // is only reached -- and only fetched -- when `-Dgrammar=true` is
+    // passed.
+    const grammar_step = b.step("test-grammar", "Run grammar verification tests (requires -Dgrammar=true; no-op otherwise)");
+    if (with_grammar) {
+        if (b.lazyDependency("ebnf", .{ .target = target, .optimize = optimize })) |ebnf_dep| {
+            const gt = b.addTest(.{
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("tests/grammar_test.zig"),
+                    .target = target,
+                    .optimize = optimize,
+                }),
+            });
+            gt.root_module.addImport("ebnf", ebnf_dep.module("ebnf"));
+            gt.root_module.addImport("gql", module);
+            gt.root_module.addAnonymousImport("iso_bnf", .{ .root_source_file = b.path("grammar/ISO_IEC_39075.bnf.txt") });
+            gt.root_module.addAnonymousImport("geode_bnf", .{ .root_source_file = b.path("grammar/geode.bnf") });
+            gt.root_module.addAnonymousImport("unimplemented_kw", .{ .root_source_file = b.path("grammar/unimplemented_iso_keywords.txt") });
+            gt.root_module.addAnonymousImport("gen_ratchet", .{ .root_source_file = b.path("grammar/generation_ratchet.txt") });
+            grammar_step.dependOn(&b.addRunArtifact(gt).step);
 
-        // Grammar-guided fuzz test (B6). Fuzz bytes drive the grammar's
-        // derivation choices (ebnf.bnf.gen.ChoiceSource.bytes); the derived
-        // GQL-program sentence is then lexed/parsed to check the
-        // never-crash property. Registered into BOTH steps from ONE
-        // compiled test binary:
-        //   - `test_step`, so `zig build test --fuzz` (CI's coverage-guided
-        //     fuzz job) reaches it exactly like the Smith-based
-        //     `fuzzParseOne` fuzz test in src/root.zig's module already does;
-        //   - `grammar_step`, so plain `zig build test-grammar` runs the
-        //     fuzz body's single non-fuzz-mode invocation (empty input,
-        //     i.e. the minimal derivation) plus the deterministic 200-seed
-        //     smoke loop, as an always-on local check that does not require
-        //     `--fuzz` or a 0.16-only std.testing.fuzz API.
-        const gf = b.addTest(.{
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("tests/grammar_fuzz.zig"),
-                .target = target,
-                .optimize = optimize,
-            }),
-        });
-        gf.root_module.addImport("ebnf", ebnf_dep.module("ebnf"));
-        gf.root_module.addImport("gql", module);
-        gf.root_module.addAnonymousImport("iso_bnf", .{ .root_source_file = b.path("grammar/ISO_IEC_39075.bnf.txt") });
-        gf.root_module.addAnonymousImport("geode_bnf", .{ .root_source_file = b.path("grammar/geode.bnf") });
-        const run_gf = b.addRunArtifact(gf);
-        test_step.dependOn(&run_gf.step);
-        grammar_step.dependOn(&run_gf.step);
+            // Grammar-guided fuzz test (B6). Fuzz bytes drive the grammar's
+            // derivation choices (ebnf.bnf.gen.ChoiceSource.bytes); the derived
+            // GQL-program sentence is then lexed/parsed to check the
+            // never-crash property. Registered into BOTH steps from ONE
+            // compiled test binary:
+            //   - `test_step`, so `zig build test -Dgrammar=true --fuzz`
+            //     (CI's coverage-guided fuzz job) reaches it exactly like the
+            //     Smith-based `fuzzParseOne` fuzz test in src/root.zig's
+            //     module already does;
+            //   - `grammar_step`, so plain `zig build test-grammar
+            //     -Dgrammar=true` runs the fuzz body's single non-fuzz-mode
+            //     invocation (empty input, i.e. the minimal derivation) plus
+            //     the deterministic 200-seed smoke loop, as an always-on
+            //     local check that does not require `--fuzz` or a
+            //     0.16-only std.testing.fuzz API.
+            const gf = b.addTest(.{
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("tests/grammar_fuzz.zig"),
+                    .target = target,
+                    .optimize = optimize,
+                }),
+            });
+            gf.root_module.addImport("ebnf", ebnf_dep.module("ebnf"));
+            gf.root_module.addImport("gql", module);
+            gf.root_module.addAnonymousImport("iso_bnf", .{ .root_source_file = b.path("grammar/ISO_IEC_39075.bnf.txt") });
+            gf.root_module.addAnonymousImport("geode_bnf", .{ .root_source_file = b.path("grammar/geode.bnf") });
+            const run_gf = b.addRunArtifact(gf);
+            test_step.dependOn(&run_gf.step);
+            grammar_step.dependOn(&run_gf.step);
+        }
     }
 
     // =========================================================================

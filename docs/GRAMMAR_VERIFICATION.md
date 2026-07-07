@@ -51,13 +51,23 @@ keyword drift, corpus, generation ratchet) and `tests/grammar_fuzz.zig`
 (grammar-guided fuzz), wired into the `test-grammar` Zig build step. The
 grammar-fuzz test artifact is *also* wired into the plain `test` step (see
 `build.zig`'s `test_step.dependOn(&run_gf.step)`) so CI's coverage-guided
-`zig build test --fuzz` job exercises the same property.
+`zig build test --fuzz` job exercises the same property. Both wirings live
+inside build.zig's `if (with_grammar)` block (see below), so they only exist
+in the build graph when `-Dgrammar=true` is passed.
 
 Grammar parsing/validation/merging/generation itself lives in the separate,
 private [`ebnf`](https://gitlab.com/devnw/zig/ebnf) package (`bnf.parse`,
 `Grammar.validate`, `Grammar.mergeFrom`, `Grammar.keywords`, `bnf.gen`),
-consumed here as a `lazy = true` Zig package-manager dependency — it is only
-fetched when a build reaches the `test` or `test-grammar` step.
+consumed here as a `lazy = true` Zig package-manager dependency. Being `lazy
+= true` in `build.zig.zon` is *not* by itself enough to keep it lazy — an
+unconditional `b.lazyDependency("ebnf", ...)` call is reached (and the
+dependency fetched) on **every** `zig build` invocation regardless of which
+step is requested, because Zig evaluates all of `build.zig` up front. To keep
+`ebnf` genuinely opt-in, the call itself is gated behind a
+`-Dgrammar=true` build option (`with_grammar` in `build.zig`, mirroring the
+`-Dwith_otel` pattern used for the `otel` dependency): **it is only fetched
+when `-Dgrammar=true` is passed**, never merely because the `test` or
+`test-grammar` step was targeted.
 
 ## What each ratchet file means
 
@@ -73,7 +83,7 @@ fetched when a build reaches the `test` or `test-grammar` step.
 1. Implement the keyword in the parser and tag it in `src/language_metadata.zig`
    (`.iso_gql` compliance).
 2. Remove the keyword's line from `grammar/unimplemented_iso_keywords.txt`.
-3. Run `zig build test-grammar --summary all` — the keyword-drift test now
+3. Run `zig build test-grammar -Dgrammar=true --summary all` — the keyword-drift test now
    passes because the keyword is both implemented and no longer listed as
    expected-missing.
 
@@ -86,7 +96,7 @@ it as a known gap) or implement it.
 
 ### Updating `generation_ratchet.txt` (playbook)
 
-1. Run `zig build test-grammar --summary all`. If the generation-ratchet test
+1. Run `zig build test-grammar -Dgrammar=true --summary all`. If the generation-ratchet test
    fails, the failure message prints the actual count and the recorded
    count:
    ```
@@ -135,7 +145,7 @@ To add a new corpus entry:
    `-- expect: error` plus a second-line `-- unsupported: <reason>` comment,
    so the gap is tracked explicitly instead of the file being silently
    deleted or miscategorized as a real syntax error.
-5. Run `zig build test-grammar --summary all` — `tests/grammar_test.zig`'s
+5. Run `zig build test-grammar -Dgrammar=true --summary all` — `tests/grammar_test.zig`'s
    `runCorpusDir` iterates every `.gql` file in both directories
    automatically; no registration step is needed beyond adding the file.
 
@@ -185,8 +195,8 @@ extensions layered on top (`grammar/geode.bnf`). Concretely:
 
 | Target | What it does |
 |---|---|
-| `make test-grammar` | Runs `zig build test-grammar --summary all`: smoke, geode merge-validate, keyword drift, conformance corpus, generation ratchet, and the grammar-fuzz smoke loop. Fast, deterministic, part of `make ci`. |
-| `make grammar-fuzz` | Runs a 60-second time-boxed local approximation of CI's coverage-guided grammar fuzz job (`timeout 60 zig build test-grammar --fuzz`; rc 124 = clean timeout = pass). See the caveats in the Makefile comment above this target about zig 0.15.2 local limitations — the deterministic 200-seed loop in `test-grammar` is the authoritative local check; this target is best-effort. |
+| `make test-grammar` | Runs `zig build test-grammar -Dgrammar=true --summary all`: smoke, geode merge-validate, keyword drift, conformance corpus, generation ratchet, and the grammar-fuzz smoke loop. Fast, deterministic, part of `make ci`. Without `-Dgrammar=true`, `zig build test-grammar` is a documented no-op (the step exists but has no dependencies). |
+| `make grammar-fuzz` | Runs a 60-second time-boxed local approximation of CI's coverage-guided grammar fuzz job (`timeout 60 zig build test-grammar -Dgrammar=true --fuzz`; rc 124 = clean timeout = pass). See the caveats in the Makefile comment above this target about zig 0.15.2 local limitations — the deterministic 200-seed loop in `test-grammar` is the authoritative local check; this target is best-effort. |
 | `make grammar-fetch` | Re-vendor `grammar/ISO_IEC_39075.bnf.txt` from upstream. Manual only. |
 | `make grammar-check-upstream` | Read-only diff of vendored grammar vs upstream. Manual/scheduled only, not part of `make ci`. |
 
@@ -194,13 +204,30 @@ extensions layered on top (`grammar/geode.bnf`). Concretely:
 
 `gitlab.com/devnw/zig/ebnf` is a **private** GitLab project. An anonymous
 HTTPS GET against it 302-redirects to a sign-in page, so `zig build`'s
-lazy-dependency fetch (`b.lazyDependency("ebnf", ...)`, reached by both the
-`test` and `test-grammar` build steps) cannot resolve it over the network
-with no credentials.
+lazy-dependency fetch (`b.lazyDependency("ebnf", ...)`, only reached when
+`-Dgrammar=true` is passed — see the Architecture section above) cannot
+resolve it over the network with no credentials.
 
-Every CI job whose `zig build` invocation reaches the `test` or
-`test-grammar` step (`test`, `test-release-safe`, `test-release-fast`,
-`test-release-small`, `grammar-verify`, `fuzz`) works around this with a
+Only the CI jobs whose `zig build` invocation passes `-Dgrammar=true`
+actually reach `b.lazyDependency("ebnf", ...)`, and only those jobs carry the
+`*fetch-ebnf` preamble:
+
+- `test` (`zig build test -Dgrammar=true --summary all`) — reaches the
+  grammar-fuzz test artifact via `test_step.dependOn(&run_gf.step)`, so it
+  needs both the flag and the preamble.
+- `grammar-verify` (`zig build test-grammar -Dgrammar=true --summary all`) —
+  needs both.
+- `fuzz` (`timeout 60 zig build test --fuzz -Dgrammar=true`) — same
+  reachability as `test`, needs both.
+
+`test-release-safe`, `test-release-fast`, `test-release-small`, and every
+`test-integration*` job deliberately do **not** pass `-Dgrammar=true` and do
+**not** carry the `*fetch-ebnf` preamble: without the flag, `b.lazyDependency`
+is never reached, so there is nothing to fetch. Grammar coverage for those
+optimization levels is intentionally out of scope — `grammar-verify` is the
+single source of truth for grammar checks.
+
+The jobs that do need it work around the private-repo fetch with a
 `.fetch-ebnf` `before_script` anchor in `.gitlab-ci.yml`:
 
 ```bash
@@ -236,3 +263,57 @@ sign-in / 401). The fix is either:
 - Check `projects/77156809/job_token_scope` (`inbound_enabled`) is still
   `true` and the allowlist (`projects/77156809/job_token_scope/allowlist`,
   paginate with `?per_page=100`) still contains this project's id.
+
+## Residual gaps and limitations
+
+The grammar-verification system materially reduces (but does not eliminate)
+drift between the ISO/IEC 39075 grammar, the Geode extension surface, and
+this parser's actual behavior. Known, accepted gaps:
+
+- **`.cypher_compat`-tagged keywords are exempt from all grammar drift
+  checks.** Roughly 20 keywords supported for Cypher-compatibility reasons
+  (including `SHOW`, `UNWIND`, `MERGE`, `EXPLAIN`) are tagged
+  `.cypher_compat` rather than `.iso_gql` in `src/language_metadata.zig`, and
+  the keyword-drift test only reconciles `.iso_gql`-tagged keywords against
+  `grammar/unimplemented_iso_keywords.txt`. Drift in the `.cypher_compat`
+  surface is not caught by this system at all.
+- **Keyword drift checks keyword SETS, not production shapes.** The
+  drift test verifies that every ISO keyword is either implemented or
+  explicitly listed as a known gap — it says nothing about whether an
+  implemented keyword's surrounding grammar production (argument order,
+  optional clauses, etc.) matches the ISO shape. Production-shape drift is
+  caught only statistically, via the generation ratchet and the conformance
+  corpus, not exhaustively.
+- **`geode.bnf`'s `!!`-note-only entries are unreachable by generation and
+  fuzzing.** Some Geode extension points (Geode-specific functions, `ts_*`
+  builtins) are documented in `grammar/geode.bnf` as `!!`-prefixed notes
+  rather than real productions, so the grammar generator and the
+  grammar-guided fuzzer can never derive sentences that exercise them. Their
+  coverage depends entirely on the conformance corpus and ordinary unit
+  tests, not on this system.
+- **The generation ratchet is a single count.** `grammar/generation_ratchet.txt`
+  pins one integer — the number of the 500 seeded sentences that currently
+  parse. Two offsetting changes (one regression, one improvement) that leave
+  the count unchanged would pass silently. The ratchet also runs with
+  `tests/grammar_test.zig`'s lexical overrides in place, so it does not cover
+  identifier/literal lexing drift; that class of drift is covered instead by
+  the override-free `grammar_fuzz` target, which drives the lexer/parser
+  directly off fuzz-chosen derivations without the overrides.
+- **The conformance corpus pins current behavior, including two known parser
+  gaps**: top-level `UNWIND` and `SCAN ... VALUES` are recorded in the corpus
+  with `-- expect: error` / `-- unsupported:` headers, i.e. the corpus
+  documents that these are not yet supported rather than asserting they
+  should be rejected forever.
+- **Upstream ISO artifact drift is checked only manually.** `make
+  grammar-check-upstream` diffs the vendored `grammar/ISO_IEC_39075.bnf.txt`
+  against the live standards.iso.org artifact, but it requires network
+  access and is not wired into any CI job (see "`make grammar-fetch` /
+  `make grammar-check-upstream`" above) — re-vendoring drift can only be
+  caught by someone running it by hand or via a periodic schedule.
+- **Per-MR fuzzing is a 200-seed smoke test, not full coverage-guided
+  fuzzing.** The `test-grammar` step (and therefore the `grammar-verify` CI
+  job that gates merges) runs `tests/grammar_fuzz.zig`'s deterministic
+  200-seed loop, which is fast and always-on but bounded. Full
+  coverage-guided fuzzing (`zig build test --fuzz`) runs on the scheduled
+  `fuzz` job (`.gitlab-ci.yml`'s `fuzz:` job, `rules: if:
+  $CI_PIPELINE_SOURCE == "schedule"`), not on every merge request.

@@ -19,8 +19,11 @@
             .lazy = true,
         },
         // Grammar verification dep (ISO/IEC 39075 BNF parser + validator).
-        // Lazy: only fetched when the build reaches
-        // `b.lazyDependency("ebnf", ...)` under the `test-grammar` step.
+        // Lazy: `b.lazyDependency("ebnf", ...)` is gated behind
+        // `-Dgrammar=true` in build.zig, so it is only fetched when that
+        // flag is passed (e.g. `zig build test-grammar -Dgrammar=true`).
+        // Without the flag the dependency is never reached, regardless of
+        // which step is being built.
         .ebnf = .{
             .url = "git+https://gitlab.com/devnw/zig/ebnf.git?ref=v0.2.0",
             .hash = "ebnf-0.2.0-rCUW9Ah1AwAeuKDC2zyXzJ6nVGJZaUFkATjpyAKQLgzI",
