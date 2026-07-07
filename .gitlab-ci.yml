@@ -5,6 +5,10 @@
 default:
   tags:
     - company
+    # All jobs here run bash scripts under debian images; without an explicit
+    # linux tag a hosted Windows shell runner matching `company` can pick
+    # them up and fail on PowerShell (observed on pipeline #2657008316).
+    - linux
 
 include:
   # Security scanning
