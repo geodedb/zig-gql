@@ -231,14 +231,14 @@ The jobs that do need it work around the private-repo fetch with a
 `.fetch-ebnf` `before_script` anchor in `.gitlab-ci.yml`:
 
 ```bash
-git clone --depth 1 --branch v0.2.0 "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.com/devnw/zig/ebnf.git" /tmp/ebnf-dep
+git clone --depth 1 --branch v0.2.1 "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.com/devnw/zig/ebnf.git" /tmp/ebnf-dep
 zig fetch /tmp/ebnf-dep
 ```
 
 This clones the tagged ref using the job's own `CI_JOB_TOKEN` (authenticated,
 no long-lived secret needed), then runs `zig fetch` against the local clone
 so the package lands in the global zig cache keyed by its content hash
-(`ebnf-0.2.0-rCUW9Ah1AwAeuKDC2zyXzJ6nVGJZaUFkATjpyAKQLgzI`, matching
+(`ebnf-0.2.1-rCUW9PB7AwBS6QjNDMRWrRHUUTkP26sAMN4MK59i3jw5`, matching
 `build.zig.zon`). The subsequent `zig build` step then resolves the
 dependency from cache with no further network access.
 
