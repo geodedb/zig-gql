@@ -106,6 +106,8 @@ stages:
 # with no further network access -- it does not matter that the clone URL
 # differs from the git+https URL in build.zig.zon.
 .fetch-ebnf: &fetch-ebnf
+  # debian:bookworm-slim ships without git (install-zig only adds curl/xz).
+  - apt-get install -y --no-install-recommends git
   - git clone --depth 1 --branch v0.2.0 "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.com/devnw/zig/ebnf.git" /tmp/ebnf-dep
   - zig fetch /tmp/ebnf-dep
 
