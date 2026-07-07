@@ -2,8 +2,24 @@
 // Copyright (c) 2024-2025 CodePros
 
 const std = @import("std");
+const builtin = @import("builtin");
 const ebnf = @import("ebnf");
 const iso_src = @embedFile("iso_bnf");
+
+// Zig 0.16 moved file/dir I/O behind an explicit `Io` interface
+// (`std.Io.Dir`), removing `std.fs.cwd()`. `std.Io` gained a `Dir`
+// declaration only in 0.16, so it doubles as a reliable comptime version
+// discriminator for `runCorpusDir` below, which needs to speak both
+// dialects (mirrors the pattern used in the `ebnf` dependency's
+// `src/lib.zig`).
+const io_has_dir = @hasDecl(std.Io, "Dir");
+
+inline fn io() std.Io {
+    return if (builtin.is_test)
+        std.testing.io
+    else
+        std.Io.Threaded.global_single_threaded.io();
+}
 
 test "iso grammar parses, validates, and exposes expected productions" {
     const a = std.testing.allocator;
@@ -187,30 +203,53 @@ fn parseOne(a: std.mem.Allocator, src: []const u8, geode_mode: bool) !bool {
     return true;
 }
 
+/// Checks one already-read corpus file's contents against its `-- expect:
+/// ok|error` header. Factored out of `runCorpusDir` so the dual-version
+/// (0.15 `std.fs.Dir` / 0.16 `std.Io.Dir`) directory-walking loops below can
+/// share identical per-file logic.
+fn checkCorpusFile(a: std.mem.Allocator, dir_path: []const u8, name: []const u8, src: []const u8, geode_mode: bool) !usize {
+    var failures: usize = 0;
+    const nl = std.mem.indexOfScalar(u8, src, '\n') orelse src.len;
+    const header = src[0..nl];
+    const expect_ok = std.mem.indexOf(u8, header, "expect: ok") != null;
+    const expect_err = std.mem.indexOf(u8, header, "expect: error") != null;
+    if (!expect_ok and !expect_err) {
+        std.debug.print("CORPUS: {s}/{s} missing '-- expect: ok|error' header\n", .{ dir_path, name });
+        failures += 1;
+        return failures;
+    }
+    const ok = try parseOne(a, src[@min(nl + 1, src.len)..], geode_mode);
+    if (ok != expect_ok) {
+        std.debug.print("CORPUS DRIFT: {s}/{s} expected {s} but parser said {s}\n", .{ dir_path, name, if (expect_ok) "ok" else "error", if (ok) "ok" else "error" });
+        failures += 1;
+    }
+    return failures;
+}
+
 fn runCorpusDir(a: std.mem.Allocator, dir_path: []const u8, geode_mode: bool) !usize {
     var failures: usize = 0;
-    var dir = try std.fs.cwd().openDir(dir_path, .{ .iterate = true });
-    defer dir.close();
-    var it = dir.iterate();
     var count: usize = 0;
-    while (try it.next()) |entry| {
-        if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".gql")) continue;
-        count += 1;
-        const src = try dir.readFileAlloc(a, entry.name, 1 << 20);
-        defer a.free(src);
-        const nl = std.mem.indexOfScalar(u8, src, '\n') orelse src.len;
-        const header = src[0..nl];
-        const expect_ok = std.mem.indexOf(u8, header, "expect: ok") != null;
-        const expect_err = std.mem.indexOf(u8, header, "expect: error") != null;
-        if (!expect_ok and !expect_err) {
-            std.debug.print("CORPUS: {s}/{s} missing '-- expect: ok|error' header\n", .{ dir_path, entry.name });
-            failures += 1;
-            continue;
+    if (comptime io_has_dir) {
+        var dir = try std.Io.Dir.cwd().openDir(io(), dir_path, .{ .iterate = true });
+        defer dir.close(io());
+        var it = dir.iterate();
+        while (try it.next(io())) |entry| {
+            if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".gql")) continue;
+            count += 1;
+            const src = try dir.readFileAlloc(io(), entry.name, a, .limited(1 << 20));
+            defer a.free(src);
+            failures += try checkCorpusFile(a, dir_path, entry.name, src, geode_mode);
         }
-        const ok = try parseOne(a, src[@min(nl + 1, src.len)..], geode_mode);
-        if (ok != expect_ok) {
-            std.debug.print("CORPUS DRIFT: {s}/{s} expected {s} but parser said {s}\n", .{ dir_path, entry.name, if (expect_ok) "ok" else "error", if (ok) "ok" else "error" });
-            failures += 1;
+    } else {
+        var dir = try std.fs.cwd().openDir(dir_path, .{ .iterate = true });
+        defer dir.close();
+        var it = dir.iterate();
+        while (try it.next()) |entry| {
+            if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".gql")) continue;
+            count += 1;
+            const src = try dir.readFileAlloc(a, entry.name, 1 << 20);
+            defer a.free(src);
+            failures += try checkCorpusFile(a, dir_path, entry.name, src, geode_mode);
         }
     }
     if (count == 0) {
