@@ -97,6 +97,16 @@ make dev
 make ci
 ```
 
+## Grammar Verification
+
+`make test-grammar` (part of `make ci`) checks this parser against the
+vendored ISO/IEC 39075 BNF grammar and the Geode extension grammar: keyword
+drift, a conformance corpus, a deterministic generation ratchet, and a
+grammar-guided fuzz smoke loop. See
+[docs/GRAMMAR_VERIFICATION.md](docs/GRAMMAR_VERIFICATION.md) for the
+architecture, how to update the ratchet files, and how to add corpus
+entries.
+
 ## Observability
 
 This library ships an optional OpenTelemetry seam, gated behind

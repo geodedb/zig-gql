@@ -1,0 +1,6 @@
+-- expect: ok
+MATCH (n:Person)-[e:KNOWS]->(m:Person)
+WHERE n.age > 21
+RETURN n.name, m.name
+ORDER BY n.name
+LIMIT 10

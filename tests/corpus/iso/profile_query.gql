@@ -1,0 +1,2 @@
+-- expect: ok
+PROFILE MATCH (n:Person) RETURN n

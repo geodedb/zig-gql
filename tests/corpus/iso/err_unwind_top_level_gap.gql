@@ -1,0 +1,10 @@
+-- expect: error
+-- unsupported: parseStatement's switch (src/parser.zig:696-1670) has no
+-- .UNWIND arm and falls through to its `else => return error.UnexpectedToken`
+-- default, so a bare top-level UNWIND is rejected even though parseQuery
+-- (src/parser.zig:1887) itself has a working UNWIND-clause check. That check
+-- is only reachable when parseQuery is re-entered recursively with UNWIND as
+-- the first token -- e.g. inside `CALL { UNWIND ... }` (see unwind_basic.gql)
+-- -- never at the top of a fresh statement.
+UNWIND [1, 2, 3] AS x
+RETURN x

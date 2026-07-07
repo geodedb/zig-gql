@@ -5,6 +5,10 @@
 default:
   tags:
     - company
+    # All jobs here run bash scripts under debian images; without an explicit
+    # linux tag a hosted Windows shell runner matching `company` can pick
+    # them up and fail on PowerShell (observed on pipeline #2657008316).
+    - linux
 
 include:
   # Security scanning
@@ -77,6 +81,36 @@ stages:
   - export PATH="$PWD/zig-${ZIG_VERSION}:$PATH"
   - zig version
 
+# Pre-populate the zig package cache with the private `ebnf` dependency.
+#
+# WHY: `build.zig`'s "test" step (see `test_step.dependOn(&run_gf.step)`)
+# and its "test-grammar" step both reach `b.lazyDependency("ebnf", ...)`
+# (grammar/ + tests/grammar_test.zig + tests/grammar_fuzz.zig, added in
+# B2/B6) -- but ONLY when `-Dgrammar=true` is passed; that dependency call
+# lives inside build.zig's `if (with_grammar)` block precisely so that an
+# unguarded `zig build` (any step, any job) never reaches it. Unlike the
+# public `otel`/`thread-pool` deps, `ebnf` is a PRIVATE GitLab project
+# (gitlab.com/devnw/zig/ebnf) -- an anonymous HTTPS GET against it
+# 302-redirects to a sign-in page, so `zig build` cannot resolve the
+# dependency over the network with no credentials. Only jobs that pass
+# `-Dgrammar=true` (currently `test`, `grammar-verify`, `fuzz`) need this
+# preamble; every other job omits both the flag and the preamble.
+#
+# HOW: clone the tagged ref with the job's own CI_JOB_TOKEN (works because
+# the ebnf project's CI/CD job-token inbound allowlist includes this
+# project -- see docs/GRAMMAR_VERIFICATION.md's "CI prerequisite" section),
+# then run `zig fetch` against the local clone. `zig fetch` stores the
+# package in the global cache keyed by content hash
+# (`ebnf-0.2.1-rCUW9PB7AwBS6QjNDMRWrRHUUTkP26sAMN4MK59i3jw5`, matching
+# build.zig.zon), so the subsequent `zig build` step resolves it from cache
+# with no further network access -- it does not matter that the clone URL
+# differs from the git+https URL in build.zig.zon.
+.fetch-ebnf: &fetch-ebnf
+  # debian:bookworm-slim ships without git (install-zig only adds curl/xz).
+  - apt-get install -y --no-install-recommends git
+  - git clone --depth 1 --branch v0.2.1 "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.com/devnw/zig/ebnf.git" /tmp/ebnf-dep
+  - zig fetch /tmp/ebnf-dep
+
 # Override zig-format component to use the project's ZIG_VERSION.
 # The v1.2.1 component defaults to 0.14.0 and does not accept a version input.
 zig-format:
@@ -93,13 +127,18 @@ build:
     - zig build check
 
 # Unit tests
+# `zig build test -Dgrammar=true` reaches the grammar-fuzz test artifact
+# (tests/grammar_fuzz.zig, see build.zig's `test_step.dependOn(&run_gf.step)`,
+# itself inside the `if (with_grammar)` block), which needs the private
+# `ebnf` dependency -- hence -Dgrammar=true plus *fetch-ebnf.
 test:
   stage: test
   image: debian:bookworm-slim
   before_script:
     - *install-zig
+    - *fetch-ebnf
   script:
-    - zig build test --summary all
+    - zig build test -Dgrammar=true --summary all
   needs:
     - build
 
@@ -115,6 +154,10 @@ test-integration:
     - build
 
 # Release optimization tests
+# Deliberately does NOT pass -Dgrammar=true: grammar coverage across
+# optimization levels is out of scope (grammar-verify is the single source of
+# truth for grammar checks), so this never reaches `b.lazyDependency("ebnf",
+# ...)` and needs no *fetch-ebnf preamble.
 test-release-safe:
   stage: test
   image: debian:bookworm-slim
@@ -126,6 +169,7 @@ test-release-safe:
     - build
 
 # ReleaseFast tests
+# Same reasoning as test-release-safe above: no -Dgrammar=true, no *fetch-ebnf.
 test-release-fast:
   stage: test
   image: debian:bookworm-slim
@@ -157,6 +201,7 @@ test-integration-release-fast:
     - build
 
 # ReleaseSmall tests
+# Same reasoning as test-release-safe above: no -Dgrammar=true, no *fetch-ebnf.
 test-release-small:
   stage: test
   image: debian:bookworm-slim
@@ -167,6 +212,22 @@ test-release-small:
   needs:
     - build
 
+# Grammar verification tests (ISO/IEC 39075 BNF conformance: smoke, geode
+# merge-validate, keyword drift, conformance corpus, generation ratchet, plus
+# the grammar-guided fuzz smoke loop -- see docs/GRAMMAR_VERIFICATION.md).
+# Needs -Dgrammar=true (without it, `test-grammar` is a documented no-op) and
+# *fetch-ebnf for the same reason as the `test` job above.
+grammar-verify:
+  stage: test
+  image: debian:bookworm-slim
+  before_script:
+    - *install-zig
+    - *fetch-ebnf
+  script:
+    - zig build test-grammar -Dgrammar=true --summary all
+  needs:
+    - build
+
 # Coverage-guided fuzz testing.
 # Runs with a 60-second timeout so the job always terminates.
 #
@@ -174,13 +235,17 @@ test-release-small:
 #   rc=0  : fuzzer stopped cleanly before timeout (no crash)
 #   rc=124: timeout reached (expected in CI) - pass
 #   other : fuzzer found a crash - fail the job
+# `zig build test --fuzz` also compiles/runs the grammar-fuzz test artifact
+# (tests/grammar_fuzz.zig), same as the `test` job above -- needs
+# -Dgrammar=true plus *fetch-ebnf.
 fuzz:
   stage: fuzz
   image: debian:bookworm-slim
   before_script:
     - *install-zig
+    - *fetch-ebnf
   script:
-    - timeout 60 zig build test --fuzz; rc=$?; if [ $rc -ne 0 ] && [ $rc -ne 124 ]; then exit $rc; fi
+    - timeout 60 zig build test -Dgrammar=true --fuzz; rc=$?; if [ $rc -ne 0 ] && [ $rc -ne 124 ]; then exit $rc; fi
   artifacts:
     when: on_failure
     paths:

@@ -1,0 +1,2 @@
+-- expect: ok
+CREATE (n:Person {name: 'Alice'})

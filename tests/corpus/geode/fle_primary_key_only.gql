@@ -1,0 +1,5 @@
+-- expect: ok
+CREATE GRAPH TYPE keyed_type AS {
+    id UUID PRIMARY KEY,
+    payload JSON
+}

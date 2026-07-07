@@ -1,0 +1,8 @@
+-- expect: error
+-- unsupported: grammar/geode.bnf documents "SCAN [ { VALUE | VALUES } ]" but
+-- src/parser.zig's SCAN handler only special-cases the singular VALUE token
+-- kind (.VALUE) or a literal identifier lexeme "VALUES" -- since "VALUES" is
+-- itself a reserved keyword (lexes as .VALUES, never .identifier), the
+-- plural form falls through unconsumed and the parser then tries (and
+-- fails) to parse a fresh VALUES statement from the leftover token.
+SCAN VALUES

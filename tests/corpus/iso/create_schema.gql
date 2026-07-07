@@ -1,0 +1,2 @@
+-- expect: ok
+CREATE SCHEMA my_schema

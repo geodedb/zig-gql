@@ -1,0 +1,2 @@
+-- expect: ok
+CREATE CONSTRAINT unique_email FOR (n:Person) REQUIRE n.email IS UNIQUE

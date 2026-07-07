@@ -1,0 +1,2 @@
+-- expect: ok
+MATCH (n:Sensor) RETURN LAST_VALUE(n.value)
