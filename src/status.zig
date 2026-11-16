@@ -31,15 +31,34 @@ pub const SQLSTATE = struct {
     pub const FEATURE_NOT_SUPPORTED = "0A000".*;
     pub const CARDINALITY_VIOLATION = "21000".*;
     pub const DATA_EXCEPTION = "22000".*;
-    pub const INVALID_CHARACTER = "22018".*;
+    /// ISO/IEC 39075:2024 Table 8: data exception - invalid character
+    /// value for cast. A value's condition, raised by a cast: it has no
+    /// source position (a lexical error is class 42).
+    pub const INVALID_CHARACTER_VALUE_FOR_CAST = "22018".*;
+    /// Deprecated name of `INVALID_CHARACTER_VALUE_FOR_CAST`.
+    pub const INVALID_CHARACTER = INVALID_CHARACTER_VALUE_FOR_CAST;
     pub const INTEGRITY_CONSTRAINT = "23000".*;
     pub const INVALID_CURSOR_STATE = "24000".*;
     pub const INVALID_TRANSACTION_STATE = "25000".*;
-    pub const SYNTAX_ERROR = "42601".*;
-    pub const UNDEFINED_OBJECT = "42703".*;
+    /// ISO/IEC 39075:2024 4.7.3 step 4 a), e): a program that does not
+    /// conform to the Format, or violates a Syntax Rule that names no
+    /// explicit condition, raises "syntax error or access rule violation"
+    /// (42000). It was the PostgreSQL 42601.
+    pub const SYNTAX_ERROR = "42000".*;
+    /// Table 8: syntax error or access rule violation - invalid syntax.
+    pub const INVALID_SYNTAX = "42001".*;
+    /// Table 8: syntax error or access rule violation - invalid reference;
+    /// 23.2 GR 2 d) adds the INVALID_REFERENCE diagnostic to it.
+    pub const INVALID_REFERENCE = "42002".*;
+    /// An identifier that names nothing is an invalid reference (42002). It
+    /// was the PostgreSQL 42703 undefined_column.
+    pub const UNDEFINED_OBJECT = INVALID_REFERENCE;
     pub const DUPLICATE_ALIAS = "42712".*;
     pub const INVALID_SCHEMA = "3F000".*; // ISO SQL SQLSTATE class 3F — invalid schema name
-    pub const PRIVILEGE_VIOLATION = "42501".*; // ISO 39075 §4.2.4.2 — insufficient privilege
+    /// Insufficient privilege. ISO/IEC 39075:2024 4.2.4.2 and 4.7.3 step 4
+    /// d), e) give the class code (42000); the subclass 501 is
+    /// implementation-defined (23.1: a subclass beginning with '5').
+    pub const PRIVILEGE_VIOLATION = "42501".*;
     pub const CONFUSABLE_IDENTIFIER = "42004".*; // ISO 39075 §6 — visually confusable identifiers
     pub const TRANSACTION_ROLLBACK = "40003".*; // ISO 39075 §4.2.3.2 — connection failure during statement
     pub const CONNECTION_FAILURE_COMMIT = "08007".*; // ISO 39075 §4.2.3.2 — connection failure during commit
@@ -87,13 +106,13 @@ pub fn featureNotSupported(feature: []const u8) GqlStatus {
     };
 }
 
-pub fn invalidCharacter(message: []const u8, line: u32, column: u32) GqlStatus {
+/// A cast of a character string that is no value of the target type
+/// (Table 8: 22018). A data exception carries no source position.
+pub fn invalidCharacterValueForCast(message: []const u8) GqlStatus {
     return GqlStatus{
-        .sqlstate = SQLSTATE.INVALID_CHARACTER,
+        .sqlstate = SQLSTATE.INVALID_CHARACTER_VALUE_FOR_CAST,
         .class = .ERROR,
         .message = message,
-        .line = line,
-        .column = column,
     };
 }
 
