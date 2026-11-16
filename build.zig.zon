@@ -1,6 +1,6 @@
 .{
     .name = .gql,
-    .version = "0.1.21",
+    .version = "0.1.22",
     .fingerprint = 0xc0f961730d0d504f,
     .minimum_zig_version = "0.15.1",
     .dependencies = .{
