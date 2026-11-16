@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.22] - 2026-11-16
+
+### Changed
+
+- **BREAKING:** `SQLSTATE.SYNTAX_ERROR` is 42000 and `syntaxError` reports
+  it: a program that does not conform to the Format, or violates a Syntax
+  Rule that names no explicit condition, raises "syntax error or access
+  rule violation" (42000, ISO/IEC 39075:2024 4.7.3 step 4 a, e). It was
+  the PostgreSQL 42601 (SONNY-6543).
+- **BREAKING:** `SQLSTATE.UNDEFINED_OBJECT` and `undefinedIdentifier` are
+  42002, Table 8's "syntax error or access rule violation - invalid
+  reference" (23.2 GR 2 d ties the INVALID_REFERENCE diagnostic to it). It
+  was the PostgreSQL 42703 (SONNY-6543).
+- The `PRIVILEGE_VIOLATION` (42501) comment cited 4.2.4.2 for the code;
+  4.2.4.2 and 4.7.3 give the class (42000), the subclass 501 is
+  implementation-defined (23.1).
+
+### Added
+
+- `SQLSTATE.INVALID_REFERENCE` (42002), `SQLSTATE.INVALID_SYNTAX` (42001)
+  and `SQLSTATE.INVALID_CHARACTER_VALUE_FOR_CAST` (22018, the Table 8 name
+  of `INVALID_CHARACTER`, kept as an alias).
+
+### Removed
+
+- **BREAKING:** `invalidCharacter(message, line, column)`. 22018 is a
+  data exception a cast raises on a value; it carries no source position,
+  and nothing called the helper. Use `invalidCharacterValueForCast(message)`
+  (SONNY-6543).
+
 ## [0.1.20] - 2026-10-12
 
 ### Changed

@@ -63,8 +63,11 @@ test "integration: parse relationship pattern" {
 }
 
 test "integration: status helpers produce correct SQLSTATE codes" {
+    // SONNY-6543: a program that does not conform to the Format is
+    // "syntax error or access rule violation" (42000, ISO/IEC 39075:2024
+    // 4.7.3 step 4 a); it was the PostgreSQL 42601.
     const err = gql.status.syntaxError("test", 1, 1, null);
-    try std.testing.expectEqualStrings("42601", &err.sqlstate);
+    try std.testing.expectEqualStrings("42000", &err.sqlstate);
     try std.testing.expectEqual(gql.status.StatusClass.ERROR, err.class);
 
     const ok = gql.status.success();

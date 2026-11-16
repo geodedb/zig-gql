@@ -31,15 +31,34 @@ pub const SQLSTATE = struct {
     pub const FEATURE_NOT_SUPPORTED = "0A000".*;
     pub const CARDINALITY_VIOLATION = "21000".*;
     pub const DATA_EXCEPTION = "22000".*;
-    pub const INVALID_CHARACTER = "22018".*;
+    /// ISO/IEC 39075:2024 Table 8: data exception - invalid character
+    /// value for cast. A value's condition, raised by a cast: it has no
+    /// source position (a lexical error is class 42).
+    pub const INVALID_CHARACTER_VALUE_FOR_CAST = "22018".*;
+    /// Deprecated name of `INVALID_CHARACTER_VALUE_FOR_CAST`.
+    pub const INVALID_CHARACTER = INVALID_CHARACTER_VALUE_FOR_CAST;
     pub const INTEGRITY_CONSTRAINT = "23000".*;
     pub const INVALID_CURSOR_STATE = "24000".*;
     pub const INVALID_TRANSACTION_STATE = "25000".*;
-    pub const SYNTAX_ERROR = "42601".*;
-    pub const UNDEFINED_OBJECT = "42703".*;
+    /// ISO/IEC 39075:2024 4.7.3 step 4 a), e): a program that does not
+    /// conform to the Format, or violates a Syntax Rule that names no
+    /// explicit condition, raises "syntax error or access rule violation"
+    /// (42000). It was the PostgreSQL 42601.
+    pub const SYNTAX_ERROR = "42000".*;
+    /// Table 8: syntax error or access rule violation - invalid syntax.
+    pub const INVALID_SYNTAX = "42001".*;
+    /// Table 8: syntax error or access rule violation - invalid reference;
+    /// 23.2 GR 2 d) adds the INVALID_REFERENCE diagnostic to it.
+    pub const INVALID_REFERENCE = "42002".*;
+    /// An identifier that names nothing is an invalid reference (42002). It
+    /// was the PostgreSQL 42703 undefined_column.
+    pub const UNDEFINED_OBJECT = INVALID_REFERENCE;
     pub const DUPLICATE_ALIAS = "42712".*;
     pub const INVALID_SCHEMA = "3F000".*; // ISO SQL SQLSTATE class 3F — invalid schema name
-    pub const PRIVILEGE_VIOLATION = "42501".*; // ISO 39075 §4.2.4.2 — insufficient privilege
+    /// Insufficient privilege. ISO/IEC 39075:2024 4.2.4.2 and 4.7.3 step 4
+    /// d), e) give the class code (42000); the subclass 501 is
+    /// implementation-defined (23.1: a subclass beginning with '5').
+    pub const PRIVILEGE_VIOLATION = "42501".*;
     pub const CONFUSABLE_IDENTIFIER = "42004".*; // ISO 39075 §6 — visually confusable identifiers
     pub const TRANSACTION_ROLLBACK = "40003".*; // ISO 39075 §4.2.3.2 — connection failure during statement
     pub const CONNECTION_FAILURE_COMMIT = "08007".*; // ISO 39075 §4.2.3.2 — connection failure during commit
@@ -87,13 +106,13 @@ pub fn featureNotSupported(feature: []const u8) GqlStatus {
     };
 }
 
-pub fn invalidCharacter(message: []const u8, line: u32, column: u32) GqlStatus {
+/// A cast of a character string that is no value of the target type
+/// (Table 8: 22018). A data exception carries no source position.
+pub fn invalidCharacterValueForCast(message: []const u8) GqlStatus {
     return GqlStatus{
-        .sqlstate = SQLSTATE.INVALID_CHARACTER,
+        .sqlstate = SQLSTATE.INVALID_CHARACTER_VALUE_FOR_CAST,
         .class = .ERROR,
         .message = message,
-        .line = line,
-        .column = column,
     };
 }
 
@@ -239,4 +258,39 @@ test "GQL39075_RQ0020_connection_failure_helper" {
 test "GQL39075_RQ0020_connection_failure_commit_helper" {
     const s = connectionFailureCommit();
     try std.testing.expectEqualStrings("08007", &s.sqlstate);
+}
+
+// SONNY-6543: the codes ISO/IEC 39075:2024 clause 23 (Table 8) defines for
+// the conditions these helpers report.
+// CANARY: REQ=GQL-39075-RQ-0021; FEATURE="GQLStatus/Table8"; ASPECT=InvalidReferenceSyntaxCast; STATUS=TESTED; TEST=GQL39075_RQ0021_undefined_identifier_is_42002,GQL39075_RQ0021_syntax_error_is_42000,GQL39075_RQ0021_invalid_character_value_for_cast; OWNER=conformance; UPDATED=2026-11-16
+
+test "GQL39075_RQ0021_undefined_identifier_is_42002" {
+    const code: [5]u8 = SQLSTATE.INVALID_REFERENCE;
+    try std.testing.expectEqualStrings("42002", &code);
+    const legacy: [5]u8 = SQLSTATE.UNDEFINED_OBJECT;
+    try std.testing.expectEqualStrings("42002", &legacy);
+    const s = undefinedIdentifier("x", 2, 7);
+    try std.testing.expectEqualStrings("42002", &s.sqlstate);
+    try std.testing.expectEqualStrings("x", s.token.?);
+}
+
+test "GQL39075_RQ0021_syntax_error_is_42000" {
+    const code: [5]u8 = SQLSTATE.SYNTAX_ERROR;
+    try std.testing.expectEqualStrings("42000", &code);
+    const invalid_syntax: [5]u8 = SQLSTATE.INVALID_SYNTAX;
+    try std.testing.expectEqualStrings("42001", &invalid_syntax);
+    const s = syntaxError("unexpected token", 1, 3, "RETURN");
+    try std.testing.expectEqualStrings("42000", &s.sqlstate);
+    try std.testing.expectEqual(@as(?u32, 1), s.line);
+}
+
+test "GQL39075_RQ0021_invalid_character_value_for_cast" {
+    // 22018 is a data exception of a cast, raised by a value: it carries no
+    // source position (a lexical error is class 42).
+    const code: [5]u8 = SQLSTATE.INVALID_CHARACTER_VALUE_FOR_CAST;
+    try std.testing.expectEqualStrings("22018", &code);
+    const s = invalidCharacterValueForCast("'abc' is not an INTEGER");
+    try std.testing.expectEqualStrings("22018", &s.sqlstate);
+    try std.testing.expectEqual(@as(?u32, null), s.line);
+    try std.testing.expectEqual(@as(?u32, null), s.column);
 }
