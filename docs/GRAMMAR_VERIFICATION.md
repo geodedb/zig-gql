@@ -264,6 +264,39 @@ sign-in / 401). The fix is either:
   `true` and the allowlist (`projects/77156809/job_token_scope/allowlist`,
   paginate with `?per_page=100`) still contains this project's id.
 
+## Known upstream issue: `--fuzz` does not compile under Zig 0.16.0
+
+The CI `fuzz` job (`timeout 60 zig build test --fuzz -Dgrammar=true`) fails
+to compile under Zig 0.16.0, on `main` as well as on every branch. The error
+is in Zig's own test runner, not in gql:
+
+```text
+lib/compiler/test_runner.zig:566:55: error: expected type '*const debug.StackTrace', found '*builtin.StackTrace'
+                            std.debug.writeStackTrace(trace, stderr) catch break :p;
+referenced by:
+    fuzz__anon_...: lib/compiler/test_runner.zig:589:41
+    fuzz [inlined]: lib/std/testing.zig:1232:32
+    test.fuzz: grammar-derived programs never crash the lexer/parser: tests/grammar_fuzz.zig:118:25
+    test.fuzz: parser never crashes on arbitrary input: src/parser.zig:6987:25
+```
+
+`test_runner.zig` passes the `*builtin.StackTrace` it holds to
+`std.debug.writeStackTrace`, which takes a `*const std.debug.StackTrace` in
+0.16.0. That code is compiled only in fuzz mode (`builtin.fuzz`), so every
+other test step builds and passes. Reproduce it with
+`zig build test -Dgrammar=true --fuzz` on Zig 0.16.0 (SONNY-6645).
+
+- **Not worked around here.** gql keeps the toolchain's test runner. It does
+  not vendor a patched copy through `addTest(.{ .test_runner = ... })`, which
+  would have to track every Zig release.
+- **Coverage meanwhile.** The deterministic 200-seed grammar-fuzz loop in
+  `zig build test-grammar -Dgrammar=true` (the `grammar-verify` job) and the
+  plain `zig build test` still run both fuzz targets' properties without the
+  coverage-guided engine.
+- **To close it.** Take a Zig release whose `test_runner.zig` passes the
+  matching `StackTrace` type (an upstream fix to Zig's test runner), then
+  re-run the `fuzz` job and delete this section.
+
 ## Residual gaps and limitations
 
 The grammar-verification system materially reduces (but does not eliminate)
