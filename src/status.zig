@@ -240,3 +240,38 @@ test "GQL39075_RQ0020_connection_failure_commit_helper" {
     const s = connectionFailureCommit();
     try std.testing.expectEqualStrings("08007", &s.sqlstate);
 }
+
+// SONNY-6543: the codes ISO/IEC 39075:2024 clause 23 (Table 8) defines for
+// the conditions these helpers report.
+// CANARY: REQ=GQL-39075-RQ-0021; FEATURE="GQLStatus/Table8"; ASPECT=InvalidReferenceSyntaxCast; STATUS=TESTED; TEST=GQL39075_RQ0021_undefined_identifier_is_42002,GQL39075_RQ0021_syntax_error_is_42000,GQL39075_RQ0021_invalid_character_value_for_cast; OWNER=conformance; UPDATED=2026-11-16
+
+test "GQL39075_RQ0021_undefined_identifier_is_42002" {
+    const code: [5]u8 = SQLSTATE.INVALID_REFERENCE;
+    try std.testing.expectEqualStrings("42002", &code);
+    const legacy: [5]u8 = SQLSTATE.UNDEFINED_OBJECT;
+    try std.testing.expectEqualStrings("42002", &legacy);
+    const s = undefinedIdentifier("x", 2, 7);
+    try std.testing.expectEqualStrings("42002", &s.sqlstate);
+    try std.testing.expectEqualStrings("x", s.token.?);
+}
+
+test "GQL39075_RQ0021_syntax_error_is_42000" {
+    const code: [5]u8 = SQLSTATE.SYNTAX_ERROR;
+    try std.testing.expectEqualStrings("42000", &code);
+    const invalid_syntax: [5]u8 = SQLSTATE.INVALID_SYNTAX;
+    try std.testing.expectEqualStrings("42001", &invalid_syntax);
+    const s = syntaxError("unexpected token", 1, 3, "RETURN");
+    try std.testing.expectEqualStrings("42000", &s.sqlstate);
+    try std.testing.expectEqual(@as(?u32, 1), s.line);
+}
+
+test "GQL39075_RQ0021_invalid_character_value_for_cast" {
+    // 22018 is a data exception of a cast, raised by a value: it carries no
+    // source position (a lexical error is class 42).
+    const code: [5]u8 = SQLSTATE.INVALID_CHARACTER_VALUE_FOR_CAST;
+    try std.testing.expectEqualStrings("22018", &code);
+    const s = invalidCharacterValueForCast("'abc' is not an INTEGER");
+    try std.testing.expectEqualStrings("22018", &s.sqlstate);
+    try std.testing.expectEqual(@as(?u32, null), s.line);
+    try std.testing.expectEqual(@as(?u32, null), s.column);
+}
